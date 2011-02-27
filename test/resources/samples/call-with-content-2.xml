@@ -1,0 +1,37 @@
+<foo>
+  <rap:defn fn="wrap-in-bar [id content]">
+    <bar id="$id">$content</bar>
+  </rap:defn>
+  
+  <!-- with no content, the conent argument is passed as nil -->
+  <rap:call fn="wrap-in-bar 23" />
+  
+  <!-- can also be called as a normal function, passing the content -->
+  $(wrap-in-bar 42 "Hello")
+  
+  <!-- the passed content can be a string... -->
+  <rap:call fn="wrap-in-bar 67">Bye</rap:call>
+  
+  <!-- ...or it can be markup -->
+  <thingy rap:call="wrap-in-bar 99">
+    <billy/><bob/>
+  </thingy>
+</foo>
+
+========
+{}
+========
+<foo>
+  <bar id="23"/>
+  <bar id="42">Hello</bar>
+  <bar id="67">Bye</bar>
+  <bar id="99">
+    <thingy>
+      <billy/><bob/>
+    </thingy>
+  </bar>
+</foo>
+
+
+
+

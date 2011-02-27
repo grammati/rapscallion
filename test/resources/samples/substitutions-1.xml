@@ -1,0 +1,11 @@
+<foo rap:args="a b">
+  <bar attr1="$a" attr2="${b}">${a}$b</bar>
+</foo>
+
+========
+{:a "hello" :b :bye}
+========
+
+<foo>
+  <bar attr1="hello" attr2=":bye">hello:bye</bar>
+</foo>

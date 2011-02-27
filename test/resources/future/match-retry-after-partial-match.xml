@@ -1,0 +1,25 @@
+<foo>
+  <!-- TODO: decide on syntax to match descendants. Note: genshi does not seem to be able to do this. -->
+  <matched rap:match="blah/bar"/>
+  
+  <blah>
+    <blah>
+      <bar/><!-- this should get matched -->
+    </blah>
+    <bar/><!-- and this too -->
+  </blah>
+</foo>
+
+========
+{}
+========
+<foo>
+  <blah>
+    <blah>
+      <matched/><!-- this one does not get matched -->
+    </blah>
+    <matched/><!-- this one does -->
+  </blah>
+</foo>
+
+

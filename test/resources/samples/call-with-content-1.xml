@@ -1,0 +1,24 @@
+<foo>
+  <rap:defn fn="wrap-in-bar [content]">
+    <bar>$content</bar>
+  </rap:defn>
+  
+  <rap:call fn="wrap-in-bar">
+    <blah x='y'/>
+    <blah x='z'/>
+  </rap:call>
+</foo>
+
+========
+{}
+========
+<foo>
+  <bar>
+    <blah x='y'/>
+    <blah x='z'/>
+  </bar>
+</foo>
+
+
+
+

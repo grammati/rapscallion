@@ -1,0 +1,24 @@
+<foo>
+  <matched-2 rap:match="matched-1/child-1"/>
+  
+  <matched-1 rap:match="bar">
+    <child-1/>
+  </matched-1>
+  
+  <blah>
+    <bar/>
+  </blah>
+</foo>
+
+========
+{}
+========
+<foo>
+  <blah>
+    <matched-1>
+      <matched-2/>
+    </matched-1>
+  </blah>
+</foo>
+
+

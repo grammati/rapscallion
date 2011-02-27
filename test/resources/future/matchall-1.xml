@@ -1,0 +1,36 @@
+<foo rap:args='col'>
+  <rap:match-seq expr='tr' as='rows'>
+    $(map #(with-attr %1 :class %2) rows (cycle ["even" "odd"]))
+  </rap:match-seq>
+
+  <table>
+    <tr rap:for='[item class] (map vector col (cycle ["even" "odd"]))'>
+      <td>$item</td>
+    </tr>
+  </table>
+</foo>
+
+========
+{}
+========
+<foo>
+  <table/>
+</foo>
+
+========
+{:col [1 2 3]}
+========
+<foo>
+  <table>
+    <tr class='even'>
+      <td>1</td>
+    </tr>
+    <tr class='odd'>
+      <td>2</td>
+    </tr>
+    <tr class='even'>
+      <td>3</td>
+    </tr>
+  </table>
+</foo>
+

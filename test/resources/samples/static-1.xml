@@ -1,0 +1,11 @@
+<foo>
+  <bar attr1="hello" attr2="bye">Some text</bar>
+</foo>
+
+========
+{}
+========
+
+<foo>
+  <bar attr1="hello" attr2="bye">Some text</bar>
+</foo>

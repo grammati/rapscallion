@@ -1,0 +1,15 @@
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en"
+      xmlns:rap="http://pro.grammati.ca/rapscallion/1.0"
+      rap:args="foo bar"
+      rap:import="java.util Map List"
+      rap:
+      >
+
+<?clojure
+  (import '(java.util Map List))
+  (use '(foo bar))
+  (defn helper [x] 
+    (str x "!"))
+?>
+
+</html>

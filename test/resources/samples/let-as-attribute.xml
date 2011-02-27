@@ -1,0 +1,13 @@
+<foo rap:args="a">
+  <bar rap:let="x a" id="id-$x">Hello $x</bar>
+</foo>
+
+========
+{:a "joe"}
+========
+<foo>
+  <bar id="id-joe">Hello joe</bar>
+</foo>
+
+
+

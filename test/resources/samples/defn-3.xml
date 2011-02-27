@@ -1,0 +1,14 @@
+<foo rap:args="a">
+  <bar rap:defn="wrap-in-bar [x]">$x</bar>
+  
+  $(wrap-in-bar a)
+</foo>
+
+========
+{:a 23}
+========
+<foo>
+  <bar>23</bar>
+</foo>
+
+

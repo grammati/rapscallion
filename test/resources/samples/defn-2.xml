@@ -1,0 +1,22 @@
+<foo rap:args="x">
+  <rap:defn fn="wrap-in-bar [x]">
+    <bar>$x</bar>
+  </rap:defn>
+  
+  $(for [x x] (wrap-in-bar x))
+</foo>
+
+========
+{:x nil}
+========
+<foo/>
+
+========
+{:x [1 2 3]}
+========
+<foo>
+  <bar>1</bar>
+  <bar>2</bar>
+  <bar>3</bar>
+</foo>
+

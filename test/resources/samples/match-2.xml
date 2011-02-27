@@ -1,0 +1,24 @@
+<foo>
+  <rap:match expr="blah/bar">
+    <matched/>
+  </rap:match>
+  
+  <bar/>
+  <blah>
+    <bar/>
+    <barbie/>
+  </blah>
+</foo>
+
+========
+{}
+========
+<foo>
+  <bar/>
+  <blah>
+    <matched/>
+    <barbie/>
+  </blah>
+</foo>
+
+

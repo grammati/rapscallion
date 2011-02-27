@@ -1,0 +1,17 @@
+<foo>
+  <rap:match expr='bar' action='append' as='x'>
+    ${x}$x
+  </rap:match>
+  <bar/>
+</foo>
+
+========
+{}
+========
+<foo>
+  <bar>
+    <bar/>
+    <bar/>
+  </bar>
+</foo>
+

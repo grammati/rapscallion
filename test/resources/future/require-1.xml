@@ -1,0 +1,23 @@
+<foo rap:require="clojure.set"
+     rap:let="a #{:a :b} b #{:b :c}">
+  
+  $(clojure.set/difference a b)
+  
+  <bar attr="$(clojure.set/intersection a b)" />
+
+  <blah rap:for="i (clojure.set/union a b)">
+    $i
+  </blah>
+</foo>
+
+========
+{}
+========
+
+<foo>
+  #{:a}
+  <bar attr="#{:b}" />
+  <blah>:a</blah>
+  <blah>:b</blah>
+  <blah>:c</blah>
+</foo>

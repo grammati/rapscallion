@@ -1,0 +1,15 @@
+<foo>
+  <rap:match expr="bar" action="replace">
+    <replaced/>
+  </rap:match>
+  <bar/>
+</foo>
+
+========
+{}
+========
+<foo>
+  <replaced/>
+</foo>
+
+

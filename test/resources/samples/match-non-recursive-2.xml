@@ -1,0 +1,22 @@
+<foo>
+  <matched rap:match="blah/bar"/>
+  
+  <blah>
+    <foo>
+      <bar/>
+    </foo>
+  </blah>
+</foo>
+
+========
+{}
+========
+<foo>
+  <blah>
+    <foo>
+      <bar/>
+    </foo>
+  </blah>
+</foo>
+
+

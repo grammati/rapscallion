@@ -1,0 +1,13 @@
+<foo>
+  <bar attr1="&lt;&amp;&gt;" />
+  <blah>Hel<span>llo</span>&amp; &lt; &gt; &quot; &apos;</blah>
+</foo>
+
+========
+{}
+========
+
+<foo>
+  <bar attr1="&lt;&amp;&gt;" />
+  <blah>Hel<span>llo</span>&amp; &lt; &gt; &quot; &apos;</blah>
+</foo>

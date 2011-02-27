@@ -1,0 +1,17 @@
+<foo rap:args="a">
+  <bar rap:if="a"/>
+</foo>
+
+========
+{:a true}
+========
+<foo>
+  <bar/>
+</foo>
+
+========
+{:a false}
+========
+<foo/>
+
+

@@ -1,0 +1,26 @@
+<foo rap:args="attrs">
+  <bar a="a" b="b" rap:attrs="attrs" />
+</foo>
+
+========
+{:attrs {:a "new-a" :b nil}}
+========
+<foo>
+  <bar a="new-a" />
+</foo>
+
+========
+{:attrs {:b "b" :c 23}}
+========
+<foo>
+  <bar a="a" b="b" c="23" />
+</foo>
+
+========
+{:attrs {:c "<&>"}}
+========
+<foo>
+  <bar a="a" b="b" c="&lt;&amp;&gt;" />
+</foo>
+
+

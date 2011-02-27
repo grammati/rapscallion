@@ -1,0 +1,28 @@
+<foo rap:args="col">
+  <rap:defn fn="listify [items body]">
+    <ul>
+      <li rap:for="item items">
+        $(body item)
+      </li>
+    </ul>
+  </rap:defn>
+  
+  <rap:call fn="listify col" args="x">
+    <span id="$(:id x)">$(:name x)</span>
+  </rap:call>
+</foo>
+
+========
+{:col (for [i (range 1 4)] {:id i :name (str "thing" i)})}
+========
+<foo>
+  <ul>
+    <li><span id="1">thing1</span></li>
+    <li><span id="2">thing2</span></li>
+    <li><span id="3">thing3</span></li>
+  </ul>
+</foo>
+
+
+
+

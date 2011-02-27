@@ -1,0 +1,17 @@
+<foo>
+  <rap:match expr="bar" as="bar-element">
+    <wrapper>$bar-element</wrapper>
+  </rap:match>
+  <bar/>
+</foo>
+
+========
+{}
+========
+<foo>
+  <wrapper>
+    <bar/>
+  </wrapper>
+</foo>
+
+

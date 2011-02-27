@@ -1,0 +1,19 @@
+<foo rap:args="a">
+  <bar rap:for="i a">$i</bar>
+</foo>
+
+========
+{:a nil}
+========
+<foo/>
+
+========
+{:a [1 2 3]}
+========
+<foo>
+  <bar>1</bar>
+  <bar>2</bar>
+  <bar>3</bar>
+</foo>
+
+
