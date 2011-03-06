@@ -1,0 +1,9 @@
+<foo rap:args="a" rap:import="(java.util ArrayList)">
+  $(ArrayList. (seq a))
+</foo>
+
+========
+{:a ["hello" "world"]}
+========
+<foo>[hello, world]</foo>
+

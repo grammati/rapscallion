@@ -2,7 +2,6 @@
   ^{:author "Chris Perkins"
     :doc "The Rapscallion XML generation and transformation library."}
   rapscallion.core
-  (:refer-clojure :exclude [compile])
   (:import (java.io Reader StringReader PushbackReader))
   (:require (clojure
              (string :as string)
@@ -114,9 +113,9 @@
   (f))
 
   
-(defmulti compile type)
+(defmulti compile-xml type)
 
-(defmethod compile String [s]
+(defmethod compile-xml String [s]
   (let [s (if *keep-whitespace* s (string/trim s))
         parts (extract-exprs s)]
     (if (and (= 1 (count parts)) (string? (first parts)))
@@ -192,18 +191,6 @@
   ([_ bindings body]
     `(for [~@bindings] ~body)))
     
-(defmethod compile-directive :args 
-  ([elt]
-    (compile-error "Directive :args is not allowed as an element."))
-  ([_ args body]
-    `(fn [{:keys [~@args]}] ~body)))
-    
-(defmethod compile-directive :include
-  ([elt]
-    (compile-error "Directive :include is not allowed as an element."))
-  ([_ paths body]
-    `(let [t# (template ~paths)] ~body)))
-
 (defmethod compile-directive :attrs
   ([elt]
     (compile-error "Directive :attrs is not allowed as an element."))
@@ -249,14 +236,11 @@
     [elt value]))
 
 
-(def *directives* (atom [
-                         {:name :attrs}
+(def *directives* (atom [{:name :attrs}
                          {:name :call}
                          {:name :let}
                          {:name :if}
                          {:name :for}
-                         {:name :include}
-                         {:name :args}
                          ]))
 
 
@@ -297,10 +281,10 @@
 (defn- make-defn [elt]
   (if (= (:tag elt) :rap:defn)
     (let [[elt fnspec] (pop-directive-attrs elt :fn)]
-      `(~@fnspec (flatseq ~@(map compile (:content elt)))))
+      `(~@fnspec (flatseq ~@(map compile-xml (:content elt)))))
     (let [[elt fnspec] (xml/pop-attr elt :rap:defn)
           [name argvec] (read-all fnspec)]
-      `(~name [~@argvec] ~(compile elt)))))
+      `(~name [~@argvec] ~(compile-xml elt)))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -343,7 +327,7 @@
   :attr-filter    ["@" :attrname ["=" :quoted-string]:?]
   :attrname       #"\w+" ;FIXME
   :quoted-string  implib/double-quoted-string
-  :clj-form       read-one
+  :clj-form       read-partial
   )
 
 (defn set-content [elt & content]
@@ -357,7 +341,7 @@
      (let [action     (keyword (or action :replace))
            as-sym     (or as-sym (gensym "matched-element"))
            as-sym     (if (string? as-sym) (read-one as-sym) as-sym)
-           body       (into [] (map compile body))
+           body       (into [] (map compile-xml body))
            parts      (.split (string/trim expr) "/")
            recursive? (not (empty? (first parts)))
            tags       (map keyword (if recursive? parts (rest parts)))
@@ -378,7 +362,6 @@
     (let [[elt [expr action as-sym]] (xml/pop-attrs elt :rap:match :rap:action :rap:as)]
       (compile-matcher expr [elt] action as-sym))))
       
-
       
 (defn compile-content
   ""
@@ -395,14 +378,14 @@
         `(let [matcher# ~(make-matcher elt)] 
           (map matcher# ~(compile-content more)))
       :else
-        `[~(compile elt) ~@(compile-content more)])))
+        `[~(compile-xml elt) ~@(compile-content more)])))
 
 (defn process-content [elt]
   (let [compiled (compile-content (:content elt))
         compiled (if ( nil? compiled) nil `(flatseq ~compiled))]
     (assoc elt :content compiled)))
         
-(defmethod compile xml/element-type [elt]
+(defmethod compile-xml xml/element-type [elt]
   (-> elt
       extract-directives
       process-content
@@ -410,32 +393,72 @@
       apply-directives
       ))
 
-(defn apply-template-args [elt]
-  (if (xml/get-attr elt :rap:args)
-    elt
-    (xml/assoc-attr elt :rap:args "")))
-
 (defn to-template-fn
   "Given a template, returns a data structure that can be eval-ed into a function."
-  [template]
-  (-> template
-      xml/parse
-      apply-template-args
-      compile
-      ))
+  [xml-in]
+  (let [root (xml/parse xml-in)
+        [root [args requires uses imports]]
+        (xml/pop-attrs root :rap:args :rap:require :rap:use :rap:import)
+        args (read-all args)
+        root (with-meta root {::root true})
+        compiled (compile-xml root)]
+    `(do
+       ~@(for [lib (read-all requires)] `(require '~lib))
+       ~@(for [lib (read-all uses)]     `(use '~lib))
+       ~@(for [lib (read-all imports)]  `(import '~lib))
+       (fn [{:keys [~@args]}] ~compiled))))
 
-(defn dump [template] (pprint/pprint (to-template-fn template)))
+(defn dump
+  "Print the code generated for the given XML template."
+  [template]
+  (pprint/pprint (to-template-fn template)))
+
+(declare template-ns)
+
+(defn- eval-in-ns
+  "Eval the "
+  ([form]
+     (eval-in-ns form (template-ns)))
+  ([form ns-name]
+     (binding [*ns* (create-ns ns-name)]
+       (eval form))))
+
+(def *template-ns* (atom nil))
+(defn template-ns []
+  (when (nil? @*template-ns*)
+    (let [ns-name (gensym "template-ns")]
+      (eval-in-ns
+       '(clojure.core/with-loading-context
+          (clojure.core/refer 'clojure.core))
+       ns-name)
+      (reset! *template-ns* ns-name)))
+  @*template-ns*)
 
 (defn compile-template
   "Compiles the template into a function that takes a context-map as input
   and produces a lazy sequence of xml-event objects."
-  [template]
-  (-> template
-    to-template-fn
-    eval))
+  [xml-in]
+  (-> xml-in
+      to-template-fn
+      eval-in-ns
+      (with-meta {::template-fn true ::template-source xml-in})
+      ))
 
 (defn template? [template]
   (fn? template)) ;TODO - attach metadata
+
+(defmacro locals []
+  (into {} (for [[k _] &env] [(keyword k) k])))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Public API
+
+(defn template
+  "Returns a compiled template, either by compiling it or by getting it
+   from the template cache."
+  [source]
+  (compile-template source))
+
 
 (defn render
   "Render a template as a string of XML"
@@ -446,9 +469,6 @@
            root-elt (tmpl context)]
        (xml/emit root-elt))))
 
-(defmacro locals []
-  (into {} (for [[k _] &env] [(keyword k) k])))
-
-(defmacro render-with-local-env [template]
+(defmacro render-with-locals [template]
   `(render ~template (locals)))
 

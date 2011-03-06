@@ -26,7 +26,7 @@
   (let [t "<foo rap:args='a b c'>$a $b $c</foo>"]
     (is (xml= "<foo>23  hello</foo>"
               (let [a 23 b nil c "hello"]
-                (rap/render-with-local-env t))))))
+                (rap/render-with-locals t))))))
 
 
 

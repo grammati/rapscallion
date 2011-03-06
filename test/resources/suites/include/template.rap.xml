@@ -2,7 +2,7 @@
       xmlns:rap="http://pro.grammati.ca/rapscallion/1.0"
       rap:args="foo bar"
       rap:import="java.util Map List"
-      rap:
+      rap:include=""
       >
 
 <?clojure

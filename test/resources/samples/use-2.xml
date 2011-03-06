@@ -1,0 +1,14 @@
+<foo rap:args="a" rap:use="[clojure.string :only [upper-case]]">
+  $(upper-case a)
+</foo>
+
+========
+{:a "hello"}
+========
+<foo>HELLO</foo>
+
+========
+{:a 'sym}
+========
+<foo>SYM</foo>
+
