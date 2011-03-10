@@ -5,7 +5,8 @@
   (:import (java.io Reader StringReader PushbackReader))
   (:require (clojure
              (string :as string)
-             (pprint :as pprint)))
+             (pprint :as pprint)
+             (walk :as walk)))
   (:require (rapscallion
              (xml :as xml)))
   (:require (imparsonate
@@ -104,15 +105,46 @@
 (def *keep-whitespace* false)
 
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Each value that is substituted into a template gets passed through
+;; this multimethod. Eg:
+;;   <foo>Hello ${name}</foo>
+;; compiles to
+;;   (Element. :foo nil ["Hello " (xml-value name)])
+
 (defmulti xml-value (fn [x] (or (::type (meta x)) (type x))))
 
+;; The default is just to stringify the object.
 (defmethod xml-value :default [x] 
+  (str x))
+
+;; Elements are inserted as-is.
+(defmethod xml-value xml/element-type [x]
   x)
 
+;; This is a special case that handles "call-with-content".
+;; Example:
+;;   <rap:call fn='foo'>
+;;     <bar>Hi</bar>
+;;   </rap:call>
+;; This generates code that will call "foo" with one parameter - a fn
+;; that returns (Element. :bar nil ["Hi"]). That fn is flagged in its
+;; metadata as a :call-body. Inside the definition of "foo", it can
+;; be inserted as either $x or $(x) (assuming it is bound to "x"
+;; inside foo). Why? Consider the definition of foo:
+;;   <rap:defn fn='foo [x]'>
+;;     <wrap>$x</wrap>
+;;   <rap:defn>
+;; The author of this function cannot know whether to use $x or $(x),
+;; because he doesn't know how it will be called:
+;;   $(foo 23)
+;;   <rap:call fn='foo'>...etc...</rap:call>
+;; 
 (defmethod xml-value :call-body [f]
   (f))
 
-  
+
+
 (defmulti compile-xml type)
 
 (defmethod compile-xml String [s]
@@ -434,12 +466,24 @@
       (reset! *template-ns* ns-name)))
   @*template-ns*)
 
+(defn- de-elementize
+  "We work with Element instances as compile-time, but they do not
+   self-evaluate like normal maps do. Convert them into an eval-able form."
+  [x]
+  (walk/prewalk
+   (fn [e]
+     (if (instance? xml/element-type e)
+       (list 'rapscallion.xml.Element. (:tag e) (:attrs e) (:content e))
+       e))
+   x))
+
 (defn compile-template
   "Compiles the template into a function that takes a context-map as input
   and produces a lazy sequence of xml-event objects."
   [xml-in]
   (-> xml-in
       to-template-fn
+      de-elementize
       eval-in-ns
       (with-meta {::template-fn true ::template-source xml-in})
       ))

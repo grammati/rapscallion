@@ -3,28 +3,39 @@
   )
 
 
-(defn parse
-  "Like clojure.xml/parse, but also accepts a string containing XML."
-  [in]
-  (let [in (if (and (string? in) (.startsWith in "<"))
-        (-> in .getBytes java.io.ByteArrayInputStream.)
-        in)]
-    (clojure.xml/parse in)))
+(defrecord Element [tag attrs content])
 
-
- 
 (defn element
   "Factory function to return an element."
   ([tag] (element tag nil nil))
   ([tag attrs] (element tag attrs nil))
-  ([tag attrs content] (struct xml/element tag attrs content)))
+  ([tag attrs content] (Element. tag attrs content)))
 
 (defn element?
   "Returns true if the given object is an element."
   [e]
   (and (map? e) (:tag e)))
 
-(def element-type clojure.lang.IPersistentMap)
+(def element-type Element)
+
+
+
+(defn- elementize [e]
+  (if (and (map? e) (:tag e))
+    (Element.
+     (:tag e)
+     (:attrs e)
+     (into [] (map elementize (:content e))))
+    e))
+
+(defn parse
+  "Like clojure.xml/parse, but also accepts a string containing XML."
+  [in]
+  (let [in (if (and (string? in) (.startsWith in "<"))
+             (-> in .getBytes java.io.ByteArrayInputStream.)
+             in)]
+    (elementize (clojure.xml/parse in))))
+
 
 
 (defn get-attr [elt attr]
