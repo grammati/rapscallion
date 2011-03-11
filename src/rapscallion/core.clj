@@ -112,7 +112,7 @@
 ;; compiles to
 ;;   (Element. :foo nil ["Hello " (xml-value name)])
 
-(defmulti xml-value (fn [x] (or (::type (meta x)) (type x))))
+(defmulti xml-value type)
 
 ;; The default is just to stringify the object.
 (defmethod xml-value :default [x] 
@@ -121,6 +121,9 @@
 ;; Elements are inserted as-is.
 (defmethod xml-value xml/element-type [x]
   x)
+
+(defmethod xml-value clojure.lang.Sequential [x]
+  (map xml-value x))
 
 ;; This is a special case that handles "call-with-content".
 ;; Example:
@@ -140,7 +143,7 @@
 ;;   $(foo 23)
 ;;   <rap:call fn='foo'>...etc...</rap:call>
 ;; 
-(defmethod xml-value :call-body [f]
+(defmethod xml-value ::call-body [f]
   (f))
 
 
@@ -240,7 +243,7 @@
   ([elt fn-and-args body]
     (compile-directive elt fn-and-args body nil))
   ([_ [f & args] body body-args]
-    `(~f ~@args (with-meta (fn [~@body-args] ~body) {::type :call-body}))))
+    `(~f ~@args (with-meta (fn [~@body-args] ~body) {:type ::call-body}))))
     
     
 (defn compile-element [elt]
