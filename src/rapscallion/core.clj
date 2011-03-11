@@ -428,6 +428,17 @@
       apply-directives
       ))
 
+(defn- de-elementize
+  "We work with Element instances as compile-time, but they do not
+   self-evaluate like normal maps do. Convert them into an eval-able form."
+  [x]
+  (walk/prewalk
+   (fn [e]
+     (if (instance? xml/element-type e)
+       (list 'rapscallion.xml.Element. (:tag e) (:attrs e) (:content e))
+       e))
+   x))
+
 (defn to-template-fn
   "Given a template, returns a data structure that can be eval-ed into a function."
   [xml-in]
@@ -436,7 +447,8 @@
         (xml/pop-attrs root :rap:args :rap:require :rap:use :rap:import)
         args (read-all args)
         root (with-meta root {::root true})
-        compiled (compile-xml root)]
+        compiled (-> root compile-xml de-elementize)
+        ]
     `(do
        ~@(for [lib (read-all requires)] `(require '~lib))
        ~@(for [lib (read-all uses)]     `(use '~lib))
@@ -469,24 +481,12 @@
       (reset! *template-ns* ns-name)))
   @*template-ns*)
 
-(defn- de-elementize
-  "We work with Element instances as compile-time, but they do not
-   self-evaluate like normal maps do. Convert them into an eval-able form."
-  [x]
-  (walk/prewalk
-   (fn [e]
-     (if (instance? xml/element-type e)
-       (list 'rapscallion.xml.Element. (:tag e) (:attrs e) (:content e))
-       e))
-   x))
-
 (defn compile-template
   "Compiles the template into a function that takes a context-map as input
   and produces a lazy sequence of xml-event objects."
   [xml-in]
   (-> xml-in
       to-template-fn
-      de-elementize
       eval-in-ns
       (with-meta {::template-fn true ::template-source xml-in})
       ))
