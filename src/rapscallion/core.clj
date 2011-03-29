@@ -497,14 +497,35 @@
 (defmacro locals []
   (into {} (for [[k _] &env] [(keyword k) k])))
 
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Public API
+
+(defn template-loader
+  "Returns a function that will return template, given a string (path or XML)."
+  [root]
+  (let [cache (atom nil)]
+    ^{:root root}
+    (fn [source]
+      (if (and (string? source) (.startsWith source \<))
+        (compile-template source) ;don't cache strings
+        (let [path  (string/join "/" [root source])
+              f     (java.io.File. path)
+              mod-t (.lastModified f)
+              [cached-template cached-mod-t] (get @cache path)]
+          (if (= cached-mod-t mod-t)
+            cached-template
+            (let [compiled (compile-template f)]
+              (swap! cache assoc path [compiled mod-t])
+              compiled)))))))
+
+(def *template-loader* (template-loader nil))
 
 (defn template
   "Returns a compiled template, either by compiling it or by getting it
    from the template cache."
   [source]
-  (compile-template source))
+  (*template-loader* source))
 
 
 (defn render
