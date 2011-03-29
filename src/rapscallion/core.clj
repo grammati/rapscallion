@@ -403,7 +403,7 @@
   [content]
   (let [[elt & more :as content] content]
     (cond
-      (not elt)
+      (nil? elt)
         nil
       (defn? elt)
         (let [[defns others] (split-with defn? content)]
@@ -417,7 +417,7 @@
 
 (defn process-content [elt]
   (let [compiled (compile-content (:content elt))
-        compiled (if ( nil? compiled) nil `(flatseq ~compiled))]
+        compiled (if (nil? compiled) nil `(flatseq ~compiled))] ;TODO - be smarter here
     (assoc elt :content compiled)))
         
 (defmethod compile-xml xml/element-type [elt]
@@ -442,11 +442,11 @@
 (defn to-template-fn
   "Given a template, returns a data structure that can be eval-ed into a function."
   [xml-in]
-  (let [root (xml/parse xml-in)
+  (let [root     (xml/parse xml-in)
         [root [args requires uses imports]]
-        (xml/pop-attrs root :rap:args :rap:require :rap:use :rap:import)
-        args (read-all args)
-        root (with-meta root {::root true})
+                 (xml/pop-attrs root :rap:args :rap:require :rap:use :rap:import)
+        args     (read-all args)
+        root     (with-meta root {::root true})
         compiled (-> root compile-xml de-elementize)
         ]
     `(do
