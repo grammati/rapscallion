@@ -1,0 +1,15 @@
+%%args foo bar
+Hello
+%(for [thing foo]
+  $thing
+%)
+Bye
+
+========
+{:foo ["AAA" "BBB"] :bar nil}
+========
+
+Hello
+  AAA
+  BBB
+Bye

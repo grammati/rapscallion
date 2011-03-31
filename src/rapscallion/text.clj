@@ -9,11 +9,8 @@
 (def ^{:dynamic true} *code-line-marker* "%")
 
 (defn compile-meta [line meta]
-  (println "compile-meta: " line)
   (let [line (triml line)
         [directive rest] (.split #"\s+" line 2)]
-    (prn "directive" directive)
-    (prn "rest" rest)
     (case directive
       "args" (assoc meta :args (read-all rest))
       (throw (IllegalArgumentException. (str "Unknown directive " directive))))))
@@ -40,7 +37,7 @@
                               (apply str)
                               read-all
                               (postwalk-replace subs))]
-            `(fn [{:keys [~@(:args meta)]}] (flatseq ~@compiled)))
+            (eval `(fn [{:keys [~@(:args meta)]}] (apply str (flatseq ~@compiled)))))
         (special-line? line)
           ; special directive, such as %%args foo bar
           (recur more subs (compile-meta (.substring (triml line) 2) meta) parts)
@@ -51,7 +48,8 @@
           ; any other line of text - pull out all adjacent text-lines,
           ; extract substitutions from the text, and store for later
           (let [[text-lines more] (split-with text-line? lines)
-                chunk (vec (extract-exprs (apply str text-lines)))
+                text (apply str (concat (interpose \newline text-lines) "\n"))
+                chunk (vec (extract-exprs text))
                 sym (gensym)
                 subs (assoc subs sym chunk)]
             (recur more subs meta (conj parts sym)))))))
