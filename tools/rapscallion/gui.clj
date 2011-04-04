@@ -1,9 +1,10 @@
+
 (ns rapscallion.gui
   (:use (rapscallion core))
   (:use (clojure (pprint :only [pprint])))
   (:import (javax.swing JFrame JTextPane SwingUtilities JButton JLabel)
            (java.awt GridLayout)
-           (java.awt.event KeyListener ActionListener))
+           (java.awt.event KeyListener KeyEvent ActionListener))
   )
   
 (defn button [label action]
@@ -28,14 +29,16 @@
               (.setText code-display code)))
         rap-reload
           (fn []
-            (use 'rapscallion.core :reload-all))]
+            (use 'rapscallion.core :reload-all)
+            (println "reloaded rapscallion.core"))]
     (.addKeyListener xml-input
       (proxy [KeyListener] []
-        (keyTyped [evt]
+        (keyTyped [^KeyEvent evt]
           (SwingUtilities/invokeLater update-code-display))
-        (keyPressed [evt])
-        (keyReleased [evt])
-        ))
+        (keyPressed [evt]
+          (if (= KeyEvent/VK_F5 (.getKeyCode evt))
+            (rap-reload)))
+        (keyReleased [evt])))
     (doto frame
       (.setLayout (GridLayout. 1 1 3 3)) ; rows, cols, hgap, vgap
       ;(.add (JLabel. "")) ; filler

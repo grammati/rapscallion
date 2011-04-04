@@ -325,6 +325,55 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; rap:match
 
+(imp/defparser match-expr-parser
+  :root           :path
+  :path           #{:relpath :abspath}
+  :abspath        ["/" :relpath]
+  :relpath        (imp/list-of :elt "/")
+  
+  :elt            [#{:tag "*"} :filter*]
+;                    (fn [tag filters] {:tag tag :filters filters})
+  
+  :tag            #"[\w-]+"
+                    keyword
+  
+  :filter         #{:xml-filter :clj-filter}
+  :attr-filter    ["@" :attrname ["=" :quoted-string]:?]
+                    (fn [n v] {:type :attr :name (keyword n) :value v})
+                    
+  :attrname       #"[\w-]+" ;FIXME
+  :quoted-string  implib/double-quoted-string
+  
+  
+  :xml-filter     ["[" :attr-filter "]"]
+  
+  :clj-filter     ["{" :clj-form "}"]
+                    (fn [form] {:type :expr :form form})
+                    
+  :clj-form       read-partial
+  
+  )
+
+
+
+(defn compile-element-filter [[tag filters]]
+  (let [elt-sym (gensym "elt")]
+    `(fn [~elt-sym]
+       (and
+        (= ~tag (:tag ~elt-sym))
+        ~@(for [{type :type :as f} filters]
+            (case type
+                  :attr (if-let [v (:value f)]
+                          `(= ~v (get-in ~elt-sym [:attrs ~(:name f)]))
+                          `(not (nil? (get-in ~elt-sym [:attrs ~(:name f)]))))
+                  :expr `(~(:form f) (meta ~elt-sym))))))))
+
+(defn compile-match-expression
+  ""
+  [expr]
+  {:pre [(not (empty? expr))]}
+  (map compile-element-filter (match-expr-parser expr)))
+
 (defn matcher? [elt]
   (and (xml/element? elt)
     (or
@@ -334,44 +383,29 @@
 (defn- map-content [elt f]
   (assoc elt :content (flatseq (map f (:content elt)))))
 
-(defn match-filter 
-  [[tag & more-tags] replacer recursive?]
-    (when-not tag
-      (compile-error "Empty match expression."))
-    (fn m [elt]
-      (if (xml/element? elt)
-        (if (= tag (:tag elt))
-          (if more-tags
-            (map-content elt (match-filter more-tags replacer false))
-            (replacer elt))
-          (if recursive?
-            (map-content elt m)
-            elt))
-        elt)))
-
-(imp/defparser match-expr
-  :root           :path
-  :path           #{:relpath :abspath}
-  :abspath        ["/" :relpath]
-  :relpath        (imp/list-of :elt "/")
-  :elt            [#{:tag "*"} :filter*]
-  :tag            #"\w+" ;FIXME
-  :filter         #{:xml-filter :clj-filter}
-  :xml-filter     ["[" :attr-filter "]"]
-  :clj-filter     ["{" :clj-form "}"]
-  :attr-filter    ["@" :attrname ["=" :quoted-string]:?]
-  :attrname       #"\w+" ;FIXME
-  :quoted-string  implib/double-quoted-string
-  :clj-form       read-partial
-  )
-
 (defn set-content [elt & content]
   (assoc elt :content (flatseq content)))
 
 (defn append-content [elt & new-content]
   (apply set-content elt (:content elt) new-content))
 
-(defn compile-matcher
+(defn match-filter
+  "Build code for a function that will replace elements matching the
+   given expression with the return value of replacer."
+  [[match-fn & more-fns] replacer recursive?]
+  (fn m [elt]
+    (if (xml/element? elt)
+      (if (match-fn elt)
+        (if more-fns
+          (map-content elt (match-filter more-fns replacer false))
+          (replacer elt))
+        (if recursive?
+          (map-content elt m)
+          elt))
+      elt)))
+
+; old version
+#_(defn compile-matcher
   ([expr body action as-sym]
      (let [action     (keyword (or action :replace))
            as-sym     (or as-sym (gensym "matched-element"))
@@ -386,6 +420,23 @@
                         (compile-error "Unknown value for 'action' attribute on rap:match elment: " action))]
        `(match-filter [~@tags] (fn [~as-sym] ~fn-body)  ~recursive?))))
 
+(defn compile-matcher
+  ([expr body action as-sym]
+     (let [action     (keyword (or action :replace))
+           as-sym     (or as-sym (gensym "matched-element"))
+           as-sym     (if (string? as-sym) (read-one as-sym) as-sym)
+           body       (into [] (map compile-xml body))
+           expr       (string/trim expr)
+           [expr recursive?] (if (.startsWith expr "/")
+                               [(.substring expr 1) false]
+                               [expr true])
+           exprs      (compile-match-expression expr)
+           fn-body    (case action
+                            :replace body
+                            :append  `(append-content ~as-sym ~@body)
+                            (compile-error "Unknown value for 'action' attribute on rap:match elment: " action))]
+       `(match-filter [~@exprs] (fn [~as-sym] ~fn-body) ~recursive?))))
+
 (defn make-matcher [elt]
   (if (= (:tag elt) :rap:match)
     (let [[elt [expr action as-sym]] (xml/pop-attrs elt :expr :action :as)]
@@ -397,7 +448,7 @@
     (let [[elt [expr action as-sym]] (xml/pop-attrs elt :rap:match :rap:action :rap:as)]
       (compile-matcher expr [elt] action as-sym))))
       
-      
+
 (defn compile-content
   ""
   [content]

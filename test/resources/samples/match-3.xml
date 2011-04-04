@@ -1,0 +1,22 @@
+<foo>
+  <rap:match expr="bar[@foo]">
+    <matched/>
+  </rap:match>
+  
+  <bar/>
+  <blah>
+    <bar foo='x'/>
+    <barbie/>
+  </blah>
+</foo>
+
+========
+{}
+========
+<foo>
+  <bar/>
+  <blah>
+    <matched/>
+    <barbie/>
+  </blah>
+</foo>
