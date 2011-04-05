@@ -1,0 +1,20 @@
+<foo rap:args='x'>
+  <rap:match expr="bar{:cool}">
+    <matched/>
+  </rap:match>
+  
+  <bar rap:meta='x'/>
+  <bar />
+  <bar rap:meta=':uncool' />
+</foo>
+
+========
+{:x {:cool true}}
+========
+<foo>
+  <matched/>
+  <bar/>
+  <bar/>
+</foo>
+
+

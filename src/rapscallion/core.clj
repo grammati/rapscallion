@@ -228,22 +228,33 @@
     
 (defmethod compile-directive :attrs
   ([elt]
-    (compile-error "Directive :attrs is not allowed as an element."))
-  ([_ expr elt]
-     (when (not= 1 (count expr))
-       (compile-error ":expr directive must be a single form"))
-    `(xml/merge-attrs ~elt ~(expr 0))))
+     (compile-error "Directive :attrs is not allowed as an element."))
+  ([_ [expr & more :as exprs] elt]
+     (when more
+       (compile-error ":attrs directive must be a single form - saw " exprs))
+     `(xml/merge-attrs ~elt ~expr)))
+
+(defn merge-meta [obj m]
+  (with-meta obj (into (or (meta obj) {}) (if (keyword? m) {m true} m))))
+
+(defmethod compile-directive :meta
+  ([elt]
+     (compile-error "Directive :meta is not allowed as an element."))
+  ([_ [expr & more :as exprs] elt]
+     (when more
+       (compile-error ":meta directive must be a single form - saw " exprs))
+     `(merge-meta ~elt ~expr)))
 
 (defmethod compile-directive :call
   ([elt]
-    (let [[elt body-args] (xml/pop-attr elt :args)
-          body-args (and body-args (read-all body-args))
-          [elt fn-and-args] (pop-directive-attrs elt :fn)]
-      (compile-directive :call fn-and-args (:content elt) body-args)))
+     (let [[elt body-args] (xml/pop-attr elt :args)
+           body-args (and body-args (read-all body-args))
+           [elt fn-and-args] (pop-directive-attrs elt :fn)]
+       (compile-directive :call fn-and-args (:content elt) body-args)))
   ([elt fn-and-args body]
-    (compile-directive elt fn-and-args body nil))
+     (compile-directive elt fn-and-args body nil))
   ([_ [f & args] body body-args]
-    `(~f ~@args (with-meta (fn [~@body-args] ~body) {:type ::call-body}))))
+     `(~f ~@args (with-meta (fn [~@body-args] ~body) {:type ::call-body}))))
     
     
 (defn compile-element [elt]
@@ -272,6 +283,7 @@
 
 
 (def *directives* (atom [{:name :attrs}
+                         {:name :meta}
                          {:name :call}
                          {:name :let}
                          {:name :if}
@@ -475,7 +487,7 @@
   (-> elt
       extract-directives
       process-content
-      process-attrs
+        process-attrs
       apply-directives
       ))
 
