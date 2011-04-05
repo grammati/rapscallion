@@ -416,22 +416,6 @@
           elt))
       elt)))
 
-; old version
-#_(defn compile-matcher
-  ([expr body action as-sym]
-     (let [action     (keyword (or action :replace))
-           as-sym     (or as-sym (gensym "matched-element"))
-           as-sym     (if (string? as-sym) (read-one as-sym) as-sym)
-           body       (into [] (map compile-xml body))
-           parts      (.split (string/trim expr) "/")
-           recursive? (not (empty? (first parts)))
-           tags       (map keyword (if recursive? parts (rest parts)))
-           fn-body    (case action
-                        :replace body
-                        :append  `(append-content ~as-sym ~@body)
-                        (compile-error "Unknown value for 'action' attribute on rap:match elment: " action))]
-       `(match-filter [~@tags] (fn [~as-sym] ~fn-body)  ~recursive?))))
-
 (defn compile-matcher
   ([expr body action as-sym]
      (let [action     (keyword (or action :replace))
@@ -487,12 +471,12 @@
   (-> elt
       extract-directives
       process-content
-        process-attrs
+      process-attrs
       apply-directives
       ))
 
 (defn- de-elementize
-  "We work with Element instances as compile-time, but they do not
+  "We work with Element instances at compile-time, but they do not
    self-evaluate like normal maps do. Convert them into an eval-able form."
   [x]
   (walk/prewalk
@@ -523,26 +507,24 @@
   [template]
   (pprint/pprint (to-template-fn template)))
 
-(declare template-ns)
+(declare *template-ns*)
 
 (defn- eval-in-ns
   "Eval the "
   ([form]
-     (eval-in-ns form (template-ns)))
-  ([form ns-name]
-     (binding [*ns* (create-ns ns-name)]
+     (eval-in-ns form *template-ns*))
+  ([form ns-or-name]
+     (binding [*ns* (if (symbol? ns-or-name) (create-ns ns-or-name) ns-or-name)]
        (eval form))))
 
-(def *template-ns* (atom nil))
-(defn template-ns []
-  (when (nil? @*template-ns*)
-    (let [ns-name (gensym "template-ns")]
-      (eval-in-ns
-       '(clojure.core/with-loading-context
-          (clojure.core/refer 'clojure.core))
-       ns-name)
-      (reset! *template-ns* ns-name)))
-  @*template-ns*)
+; Namespace in which to eval templates
+(defonce *template-ns* 
+  (let [ns-name (gensym "template-ns")]
+    (eval-in-ns
+     '(clojure.core/with-loading-context
+        (clojure.core/refer 'clojure.core))
+     ns-name)
+    (find-ns ns-name)))
 
 (defn compile-template
   "Compiles the template into a function that takes a context-map as input
@@ -564,13 +546,15 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Public API
 
+(declare *template-loader*)
+
 (defn template-loader
   "Returns a function that will return template, given a string (path or XML)."
   [root]
   (let [cache (atom nil)]
     ^{:root root}
-    (fn [source]
-      (if (and (string? source) (.startsWith source \<))
+    (fn loader [source]
+      (if (and (string? source) (.startsWith source "<"))
         (compile-template source) ;don't cache strings
         (let [path  (string/join "/" [root source])
               f     (java.io.File. path)
@@ -578,7 +562,8 @@
               [cached-template cached-mod-t] (get @cache path)]
           (if (= cached-mod-t mod-t)
             cached-template
-            (let [compiled (compile-template f)]
+            (let [compiled (binding [*template-loader* loader]
+                             (compile-template f))]
               (swap! cache assoc path [compiled mod-t])
               compiled)))))))
 

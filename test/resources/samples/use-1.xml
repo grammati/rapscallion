@@ -1,4 +1,4 @@
-<foo rap:args="a" rap:use="clojure.string">
+<foo rap:args="a" rap:use="(clojure [string :exclude [replace reverse]])">
   $(upper-case a)
 </foo>
 

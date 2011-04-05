@@ -1,0 +1,13 @@
+<foo rap:include='_lib.xml'>
+  $(bar "hello")  
+</foo>
+
+========
+{}
+========
+<foo>
+  <xxx>
+    <bar>hello</bar>
+  </xxx>
+</foo>
+

@@ -1,0 +1,11 @@
+<rap:template>
+
+  <foo rap:defn='foo [a]'>
+    <bar>$a</bar>
+  </foo>
+  
+  <rap:defn fn='bar [b]'>
+    <xxx>$(foo b)</xxx>
+  </rap:defn>
+  
+</rap:template>
