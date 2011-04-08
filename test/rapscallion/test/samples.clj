@@ -12,8 +12,6 @@
 (defn eval-file [#^java.io.File f]
   (eval (read (java.io.PushbackReader. (java.io.FileReader. f)))))
 
-(def *samples-dir* "./test/resources/samples")
-
 (defn directory-listing
   ([dirname]
      (directory-listing dirname (constantly true)))
@@ -31,29 +29,31 @@
 (defn sample-files [dirname ext]
   (files-by-ext dirname ext #(and (not (.startsWith % "_")) (not (.contains % "#")))))
 
+(defn test-sample-file [test-file compile-fn compare-fn]
+  (println "Testing: " test-file)
+  (let [[template & testcases] (map #(.trim %) (string/split (slurp test-file) #"={8,}"))
+        template (compile-fn template)]
+    (when (< (count testcases) 2)
+      (throw (Exception. (str "Missing testcase in sample file " test-file))))
+    (doseq [[input expected] (partition 2 testcases)]
+      (let [input (eval (read-string input))]
+        (is (compare-fn expected (template input)))))))
 
-(defn test-samples [dirname ext compile-fn compare-fn]
-  (doseq [test-file (sample-files dirname ext)]
-    (println "Testing: " test-file)
-    (let [[template & testcases] (map #(.trim %) (string/split (slurp test-file) #"={8,}"))
-          template (compile-fn template)]
-      (when (< (count testcases) 2)
-        (throw (Exception. (str "Missing testcase in sample file " test-file))))
-      (doseq [[input expected] (partition 2 testcases)]
-        (let [input (eval (read-string input))]
-          (is (compare-fn expected (template input))))))))
+(defmacro test-samples [dirname ext compile-fn compare-fn]
+  (let [tests (for [test-file (sample-files dirname ext)]
+                `(deftest ~(symbol (string/replace test-file #"[^\w-]" "-"))
+                   (test-sample-file ~test-file ~compile-fn ~compare-fn)))]
+    `(do ~@tests)))
 
-(deftest test-xml-samples
-  (test-samples *samples-dir*
-                ".xml"
-                rap/compile-template
-                (fn [expected result]
-                  (xml= expected (xml/emit result)))))
+(test-samples "./test/resources/samples"
+              ".xml"
+              rap/compile-template
+              (fn [expected result]
+                (xml= expected (xml/emit result))))
 
-(deftest test-text-samples
-  (test-samples *samples-dir*
-                ".txt"
-                text/compile-template
-                (fn [expected result]
-                  (= (.trim expected) (.trim result)))))
+(test-samples "./test/resources/samples"
+              ".txt"
+              text/compile-template
+              (fn [expected result]
+                (= (.trim expected) (.trim result))))
 

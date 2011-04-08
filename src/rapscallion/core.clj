@@ -344,28 +344,22 @@
   :relpath        (imp/list-of :elt "/")
   
   :elt            [#{:tag "*"} :filter*]
-;                    (fn [tag filters] {:tag tag :filters filters})
-  
   :tag            #"[\w-]+"
                     keyword
   
   :filter         #{:xml-filter :clj-filter}
+  :xml-filter     ["[" :attr-filter "]"]
   :attr-filter    ["@" :attrname ["=" :quoted-string]:?]
                     (fn [n v] {:type :attr :name (keyword n) :value v})
                     
   :attrname       #"[\w-]+" ;FIXME
   :quoted-string  implib/double-quoted-string
   
-  
-  :xml-filter     ["[" :attr-filter "]"]
-  
   :clj-filter     ["{" :clj-form "}"]
                     (fn [form] {:type :expr :form form})
                     
   :clj-form       read-partial
-  
   )
-
 
 
 (defn compile-element-filter [[tag filters]]
@@ -490,8 +484,8 @@
   "Given a template, returns a data structure that can be eval-ed into a function."
   [xml-in]
   (let [root     (xml/parse xml-in)
-        [root [args requires uses imports]]
-                 (xml/pop-attrs root :rap:args :rap:require :rap:use :rap:import)
+        [root [args requires uses imports includes]]
+                 (xml/pop-attrs root :rap:args :rap:require :rap:use :rap:import :rap:include)
         args     (read-all args)
         root     (with-meta root {::root true})
         compiled (-> root compile-xml de-elementize)
