@@ -76,13 +76,13 @@
 (defn append-content [elt & children]
   (update-in elt [:content] concat children))
 
-(defn xml-escape [#^String s]
+(defn ^String xml-escape [^String s]
   (-> s
       (.replaceAll "&"  "&amp;")
       (.replaceAll "<"  "&lt;")
       ))
 
-(defn xml-escape-attr [#^String s]
+(defn ^String xml-escape-attr [^String s]
   (-> s
       xml-escape
       (.replaceAll "'"  "&apos;")

@@ -36,18 +36,18 @@
 (defn read-partial
   "Like (read s), but returns a 2-element vector of the form
    that was read and the remaining, unread portion of the string."
-  [s]
+  [^String s]
   (let [rdr (PushbackReader. (StringReader. s))]
     [(read rdr) (slurp-reader rdr)]))
 
-(defn read-all [s]
+(defn read-all [^String s]
   (loop [forms [] s s]
     (if (empty? s)
       forms
       (let [[form s] (read-partial s)]
         (recur (conj forms form) (.trim s))))))
 
-(defn read-one [s]
+(defn read-one [^String s]
   (let [[form & more] (read-all s)]
     (when more
       (compile-error "Expected exactly one clojure form - saw \"" s "\""))
@@ -62,21 +62,23 @@
 
 (defn extract-exprs
   "Extract embedded expressions from the string, returning a sequence of strings and forms."
-  ([s] (extract-exprs s "$"))
-  ([s c]
+  ([^String s] (extract-exprs s "$"))
+  ([^String s ^String c]
     (let [pat (java.util.regex.Pattern/quote c)]
       (loop [parts [] s s]
-        (let [[left rest] (seq (.split s pat 2)) ; FIXME - $ as last character gets ignored
+        (let [[left ^String rest] (seq (.split s pat 2))
               parts (if (not-empty left) (conj parts left) parts)]
           (cond
-            (empty? rest) ; at the end
+            (nil? rest) ; at the end
               (merge-adjacent-strings parts)
+            (empty? rest) ; trailing $
+              (compile-error "Trailing " c ". Double it to insert a literal " c)
             (.startsWith rest c) ; doubled $$ == literal $
               (recur (conj parts c) (.substring rest 1))
             :else
               (let [brace? (.startsWith rest "{")
                     rest (if brace? (.substring rest 1) rest) 
-                    [form right] (read-partial rest)]
+                    [form ^String right] (read-partial rest)]
                 (when (and brace? (not (.startsWith right "}")))
                   (throw (Exception. "mismatched curly-bracket in embedded code"))) ; FIXME - exception class, line number, etc.
                 (recur (conj parts form) (if brace? (.substring right 1) right)))))))))
@@ -522,7 +524,7 @@
 
 (defn compile-template
   "Compiles the template into a function that takes a context-map as input
-  and produces a lazy sequence of xml-event objects."
+  and produces a tree of Elements."
   [xml-in]
   (-> xml-in
       to-template-fn
@@ -531,7 +533,7 @@
       ))
 
 (defn template? [template]
-  (fn? template)) ;TODO - attach metadata
+  (::template-fn (meta template)))
 
 (defmacro locals []
   (into {} (for [[k _] &env] [(keyword k) k])))
