@@ -1,0 +1,87 @@
+
+* Design
+
+** Overall Design
+
+Areas of responsibility:
+
+*** XML - parsing, manipulating, rendering.
+Would prefer if most of this came from a clojure core lib, but
+clojure.xml is a bit lacking - no namespaces, no rendering (fixed in
+1.3?), no utilities.
+
+*** Template loading - managing paths, caching compiled templates, reloading strategy, path-safety.
+
+*** String compilation - extracting ${} expressions from text and compiling into code. Shared by text templates.
+
+*** XML Templates
+**** Template compilation core - the low-level utilities that allow the rapscallion language to be built - defdirective, etc.
+**** Rapscallion directives - the built-in directives, like :for, :if, etc.
+
+*** Text templates - more details to be worked out - consider this experimental
+
+*** Matching
+**** Matching core - mechanism to match elements in an XML tree. Can be written in pure clojure.
+**** Match-replace mechanism - ability to operate on matched elements - replace, append-child, wrap, etc.
+**** Match-expression parser - parser to compile embedded match expressions from templates into clojure match syntax.
+**** TODO - figure out how much of the rest of template compilation can be built on matching.
+
+*** Utilities
+**** AOT compilation - to allow templates to be used in restricted envs (like AppEngine?)
+
+
+** Organizing Templates - Multiple Files
+
+   Notes about how to organize things when your template gets too big and
+   complicated to be al in one file.
+
+*** Use cases:
+    Snippets, Libraries, Filters
+
+*** Snippets. You just want the template to be rendered in-place, inside another template.
+
+       <rap:include template="some/other/template.xml" />
+
+       $(rap/include-template "some/other/template.xml")
+
+       $(rap/include-template "some/other/template.xml" { :foo "bar" })
+
+**** Questions:
+****** How to handle args? Inherit them from the calling template? - NO - doesn't fit with the lexical-scoping of the rest of rapscallion
+****** Pass them explicitly - YES.  Tediious? Maybe.  Need an easy way to pass along all the callers args:  $(rap/include "other.xml" (rap/args))
+      
+
+*** Libraries. Collection of <rap:defn> and/or <rap:match> definitions, to be imported and called (defns), or applied automatically (match templates).
+
+**** A library should have <rap:template...> as its top-level element.
+**** What are the semantics of <rap:template>? It's just a grouping construct.
+**** Top-level <rap:defn> elements within it become ns-level defns in the generated code
+**** Top-level <rap:match> elements automatically filter the content of the including page, just as if they were defined inline, at the point of inclusion.
+**** What if there is non-defn / non-match content inside <rap:template>?
+***** Option 1: Include the content at the point of inclusion of the template. This may be a clean way to define a "snippet", but factor out parts of it into defns.
+***** Option 2: Compilation error? I don't think so...
+**** What if a "library" template has something other than <rap:template> as the top-level element? Then it's not a library - it's a "snippet", and the defns and matchers are local to that element.
+**** Match-libraries: Put some related top-level <rap:match> elements in a <rap:template>. Compiling it yields a filter-template that effectively applies all the contained filters. Example: 
+     # file: foo.xml
+     <rap:template> <rap:match expr="...">stuff</rap:match> <rap:match
+       expr="...">other stuff</rap:match> </rap:template>
+     # file: bar.clj
+     (defn myfn [] (->> {:some stuff} (rap/template "my-temlate.xml")
+         (rap/template "foo.xml")))
+
+
+*** Filter-templates.  What are the semantics of filter-templates - i.e. templates that just do matches?  I want to be able to define two types of templates:
+**** 1: Content-producing templates. These are conceptually a bit like a call to "map" - they produce content.
+**** 2: Filter-templates. These are conceptually like a call to "filter" - they take input and produce output.
+***** Analagous to (-> (some-seq) (filter pred1) (filter pred2) ...)
+**** Should the two types of templates be completely separate - separate API, etc.?
+**** A content-producing template compiles into a function of one argument: the arg-map.
+**** A filter-template needs to compile into a function of one or two args (undecided - maybe both). The one-arg version takes the output of another template. But then what is the "context" inside the filter-template - it may need args too.  Options:
+***** Inherit the args that were passed to the original content-producing template (attached as metadata?).
+***** Allow args to be passed as the second parameter:  (-> (some-template {:my args}) (some-filter-template {:other args}))
+**** Calling a filter-template as if it were a content-template would be an error:  (rap/render my-filter-template {:some args}).  Or would it - wouldn't it try to treat the arg-map as an Element?
+**** Maybe best to be explicit?  Have separate (rap/template ...) and (rap/filter-template ...) calls, producing different things?  But they would both just produce a function?
+**** It's just Clojure: if you call a function wrong, you get wrong results. So keep it simple.
+**** Could there be templates that act as either a content-producing or filtering template, depending on how they are called? Maybe I could unify them - even a content-producing template can contain <rap:match> elements, so it could be a filter too.
+**** If unified, every template whould need to have a two-arg version (implies that the "input-content" arg must be second). What are the semantics of calling a template intended to be content-producing with initial input?
+    
