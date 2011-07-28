@@ -164,4 +164,54 @@ The example above is exactly equivalent to:
     ;; "<foo><bar>one</bar><bar>two</bar><bar>three</bar></foo>"
 ```
 
+####
+NOTE: Everything from here down is a work-in-progress.
+
+TODO : basic directives (if, let, ...)
+
+### Defns ###
+
+Define functions, call them, call-with-content.
+
+
+### Matchers ###
+
+Define matchers. Match-expression syntax. Scope of a match. Match actions (replace, append-child, ...)
+
+
+### Includes ###
+
+How to split up you template into a library of defns and matchers. How to reuse them. How to use filter-templates programmatically.
+
+
+### Code blocks ###
+
+Putting code in a <?clojure ... ?> processing instruction.
+
+
+### Extending ###
+
+Extend the behavior of rapscallion.
+
+#### Defining substitutions ####
+
+xml-value multimethod/protocol applied to substitutions
+
+#### defdirective ####
+
+defdirective to define your own rap:xxx directives
+
+
+### Template Loaders ###
+
+What they are, how they work, why...
+
+#### Caching ####
+
+Caching of compiled templates, reloading strategies.
+
+
+### Compilation ###
+
+Describe how a template is compiled into clojure code and evaled.
 
