@@ -47,7 +47,7 @@
                                         ;(binding [*out* devnul])
     (loop [n 1]
       (let [t (time-f n)]
-        (if (< t 1e6)
+        (if (< t 1e8)
           (recur (* 2 n))
           (double ( / t n)))))))
 

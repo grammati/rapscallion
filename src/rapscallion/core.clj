@@ -102,9 +102,9 @@
 ;match     yes       yes      <rap:match xpath="foo/bar{:cool}">
 
 
-(def *strict* true) ; for debugging - don't change this to false unless you know what you're doing
+(def ^:dynamic *strict* true) ; for debugging - don't change this to false unless you know what you're doing
 
-(def *keep-whitespace* false)
+(def ^:dynamic *keep-whitespace* false)
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -284,13 +284,14 @@
     [elt value]))
 
 
-(def *directives* (atom [{:name :attrs}
-                         {:name :meta}
-                         {:name :call}
-                         {:name :let}
-                         {:name :if}
-                         {:name :for}
-                         ]))
+(def ^:dynamic *directives*
+  (atom [{:name :attrs}
+         {:name :meta}
+         {:name :call}
+         {:name :let}
+         {:name :if}
+         {:name :for}
+         ]))
 
 
 (defn apply-directives
@@ -503,7 +504,7 @@
   [template]
   (pprint/pprint (to-template-fn template)))
 
-(declare *template-ns*)
+(declare ^:dynamic *template-ns*)
 
 (defn- eval-in-ns
   "Eval the "
@@ -514,7 +515,7 @@
        (eval form))))
 
 ; Namespace in which to eval templates
-(defonce *template-ns* 
+(defonce ^:dynamic *template-ns* 
   (let [ns-name (gensym "template-ns")]
     (eval-in-ns
      '(clojure.core/with-loading-context
@@ -542,7 +543,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Public API
 
-(declare *template-loader*)
+(declare ^:dynamic *template-loader*)
 
 (defn template-loader
   "Returns a function that will return template, given a string (path or XML)."
@@ -563,7 +564,7 @@
               (swap! cache assoc path [compiled mod-t])
               compiled)))))))
 
-(def *template-loader* (template-loader nil))
+(def ^:dynamic *template-loader* (template-loader nil))
 
 (defn template
   "Returns a compiled template, either by compiling it or by getting it
