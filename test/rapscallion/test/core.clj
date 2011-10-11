@@ -1,12 +1,24 @@
 (ns rapscallion.test.core
   (:require (rapscallion 
-              (core :as rap)
-              (xml :as xml)))
+             (core :as rap)
+             (xml :as xml))
+            (clojure
+             (string :as string)))
   (:use [clojure.test])
   )
 
+(defn xml-str= [a b]
+  (letfn [(squish [x]
+            (-> x
+                string/trim
+                (string/replace #">\s*<" "><")))]
+    (= (squish a) (squish b))))
+
 (defn xml= [a b]
-  (= (xml/parse a) (xml/parse b)))
+  (try
+    (= (xml/parse a) (xml/parse b))
+    (catch Exception x
+      (xml-str= a b))))
 
 (deftest test-read-partial
   (is (= (rap/read-partial "nil") [nil ""]))

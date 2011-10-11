@@ -1,9 +1,36 @@
 (ns rapscallion.xml
   (:require (clojure [xml :as xml]))
+  (:import [java.io Writer]))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Protocols
+(defprotocol ElementAccessor
+  (tag [this] "Return the tag of the element")
+  (attrs [this] "Return a map of the attributes of the element")
+  (content [this] "Return a sequence of children of the element"))
+
+(defprotocol XMLWritable
+  (emit-xml [this ^Writer out]))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Records
+
+(declare emit-element)
+
+(defrecord Element [tag attrs content]
+  
+  ElementAccessor
+  (tag [this] tag)
+  (attrs [this] attrs)
+  (content [this] content)
+  
+  XMLWritable
+  (emit-xml [this out]
+    (emit-element this out))
   )
 
-
-(defrecord Element [tag attrs content])
 
 (defn element
   "Factory function to return an element."
@@ -14,13 +41,16 @@
 (defn element?
   "Returns true if the given object is an element."
   [e]
-  (and (map? e) (:tag e)))
+  (instance? Element e))
 
+;;; Alias for the Element class
 (def element-type Element)
 
 
 
-(defn- elementize [e]
+(defn- elementize
+  "This is used to turn a tree of "
+  [e]
   (if (and (map? e) (:tag e))
     (Element.
      (:tag e)
@@ -32,11 +62,13 @@
   "Like clojure.xml/parse, but also accepts a string containing XML."
   [in]
   (let [in (if (and (string? in) (.startsWith in "<"))
-             (-> in .getBytes java.io.ByteArrayInputStream.)
+             (-> in .getBytes java.io.ByteArrayInputStream.) ;FIXME - not right - encoding!
              in)]
     (elementize (clojure.xml/parse in))))
 
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Utilities
 
 (defn get-attr [elt attr]
   (get-in elt [:attrs attr]))
@@ -76,6 +108,10 @@
 (defn append-content [elt & children]
   (update-in elt [:content] concat children))
 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Emitting XML
+
 (defn ^String xml-escape [^String s]
   (-> s
       (.replaceAll "&"  "&amp;")
@@ -88,27 +124,50 @@
       (.replaceAll "'"  "&apos;")
       ))
 
+(defn emit-element [^Element e ^Writer out]
+  (let [{:keys [tag attrs content]} e]
+    (doto out
+      (.write "<")
+      (.write (name tag)))
+    (doseq [[k v] attrs]
+      (if-not (nil? v)
+        (doto out
+          (.write " ")
+          (.write (name k))
+          (.write "='")
+          (.write (xml-escape-attr (str v)))
+          (.write "'"))))
+    (if (empty? content)
+      (.write out "/>")
+      (do
+        (.write out ">")
+        (doseq [child content]
+          (emit-xml child out))
+        (doto out
+          (.write "</")
+          (.write (name tag))
+          (.write ">"))))))
+
+(extend-protocol XMLWritable
+  
+  clojure.lang.Sequential
+  (emit-xml [s ^Writer out]
+    (doseq [o s]
+      (emit-xml o out)))
+  
+  String
+  (emit-xml [s ^Writer out]
+    (.write out (xml-escape s)))
+
+  Object
+  (emit-xml [o ^Writer out]
+    (emit-xml (str o) out))
+  
+  )
+
 (defn emit
-  "Turn an element into XML"
-  ;this mostly exists because clojure.xml/emit does not XML-escape text
+  "Turn an element into a String of XML."
   [elt]
-  (let [sb (StringBuilder.)]
-    (letfn [(p [& strs] (doseq [s strs] (.append sb s)))
-            (write [elt]
-              (if-not (map? elt)
-                (p (xml-escape (str elt)))
-                (let [{:keys [tag attrs content]} elt
-                      tag (name tag)]
-                  (p "<" tag)
-                  (doseq [[k v] attrs]
-                    (if-not (nil? v)
-                      (p \space (name k) "='" (xml-escape-attr (str v)) \')))
-                  (if (empty? content)
-                    (p "/>")
-                    (do 
-                      (p ">")
-                      (doseq [child content] (write child))
-                      (p "</" tag ">"))))))]
-      (write elt)
-      (.toString sb))))
+  (with-out-str
+    (emit-xml elt *out*)))
 

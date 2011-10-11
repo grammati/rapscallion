@@ -1,6 +1,6 @@
 (ns perf.perf
-  (:require (rapscallion [core :as rap]))
-  (:require (clojure [zip :as zip]))
+  (:require (rapscallion [core :as rap])
+            (clojure [zip :as zip]))
   (:import [java.io Writer])
   )
 
@@ -179,6 +179,9 @@
         (if-let [next-e (zip/right e)]
           (recur next-e (inc i))
           (zip/root e))))))
+
+
+
 
 (defn make-tree-literal []
   {:tag :aaa

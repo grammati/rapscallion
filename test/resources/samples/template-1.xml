@@ -1,0 +1,15 @@
+<rap:template rap:args='a b'>
+  <foo xxx='$a'/>
+  <bar yyy='$a'>
+    $b
+  </bar>
+</rap:template>
+
+========
+{:a "yo" :b "bye"}
+========
+
+<foo xxx='yo'/>
+<bar yyy='yo'>bye</bar>
+
+

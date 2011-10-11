@@ -343,7 +343,7 @@
 (imp/defparser match-expr-parser
   :root           :path
   :path           #{:relpath :abspath}
-  :abspath        ["/" :relpath]
+  :abspath        ["/" :relpat]
   :relpath        (imp/list-of :elt "/")
   
   :elt            [#{:tag "*"} :filter*]
@@ -406,7 +406,9 @@
     (if (xml/element? elt)
       (if (match-fn elt)
         (if more-fns
-          (map-content elt (match-filter more-fns replacer false))
+          (-> elt
+           (map-content (match-filter more-fns replacer false))
+           (map-content  m))
           (replacer elt))
         (if recursive?
           (map-content elt m)
@@ -490,8 +492,8 @@
         [root [args requires uses imports includes]]
                  (xml/pop-attrs root :rap:args :rap:require :rap:use :rap:import :rap:include)
         args     (read-all args)
-        root     (with-meta root {::root true})
-        compiled (-> root compile-xml de-elementize)
+        roots    (if (= (:tag root) :rap:template) (:content root) [root])
+        compiled (into [] (map #(-> % compile-xml de-elementize) roots))
         ]
     `(do
        ~@(for [lib (read-all requires)] `(require '~lib))
@@ -579,8 +581,8 @@
      (render template {}))
   ([template context]
      (let [tmpl (if (template? template) template (compile-template template))
-           root-elt (tmpl context)]
-       (xml/emit root-elt))))
+           elts (tmpl context)]
+       (xml/emit elts))))
 
 (defmacro render-with-locals [template]
   `(render ~template (locals)))
