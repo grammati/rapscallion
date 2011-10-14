@@ -258,7 +258,17 @@
   ([_ [f & args] body body-args]
      `(~f ~@args (with-meta (fn [~@body-args] ~body) {:type ::call-body}))))
     
-    
+
+
+(comment
+  ;; hypothetical syntax for defdirective
+  (defdirective :call
+    :as-attribute :fn
+    :as-element {:attributes [:fn :args]
+                 }))
+
+
+
 (defn compile-element [elt]
   (if (directive? elt)
     (compile-directive elt)
@@ -291,6 +301,7 @@
          {:name :let}
          {:name :if}
          {:name :for}
+         {:name :include}
          ]))
 
 
@@ -489,8 +500,8 @@
   "Given a template, returns a data structure that can be eval-ed into a function."
   [xml-in]
   (let [root     (xml/parse xml-in)
-        [root [args requires uses imports includes]]
-                 (xml/pop-attrs root :rap:args :rap:require :rap:use :rap:import :rap:include)
+        [root [args requires uses imports]]
+                 (xml/pop-attrs root :rap:args :rap:require :rap:use :rap:import)
         args     (read-all args)
         roots    (if (= (:tag root) :rap:template) (:content root) [root])
         compiled (into [] (map #(-> % compile-xml de-elementize) roots))
@@ -555,7 +566,7 @@
     (fn loader [source]
       (if (and (string? source) (.startsWith source "<"))
         (compile-template source) ;don't cache strings
-        (let [path  (string/join "/" [root source])
+        (let [path  (string/join "/" [(or root \.) source])
               f     (java.io.File. path)
               mod-t (.lastModified f)
               [cached-template cached-mod-t] (get @cache path)]

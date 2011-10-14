@@ -47,13 +47,46 @@
 
 (test-samples "./test/resources/samples"
               ".xml"
-              rap/compile-template
+              rap/template
               (fn [expected result]
                 (xml= expected (xml/emit result))))
 
 (test-samples "./test/resources/samples"
               ".txt"
-              text/compile-template
+              text/template
               (fn [expected result]
                 (= (.trim expected) (.trim result))))
+
+
+(defn test-suite
+  "Given a directory, loads a template called template.xml, then
+  renders it for each input loaded from a file called input-N.clj. The
+  result is compared to the contents of expected-N.xml, for each N."
+  [dir]
+  (println "Testing: " dir)
+  (let [template (rap/template (str dir "/template.xml"))
+        inputs   (->> dir
+                      directory-listing
+                      (map #(re-find #"expected-(\d+).clj$" %))
+                      (filter identity))]
+    (when (empty? inputs)
+      (throw (Exception. (str "No inputs found for test suite: " dir))))
+    (doseq [[input-file n] inputs]
+      (let [input (->> input-file
+                       (str dir "/")
+                       slurp
+                       read-string
+                       eval)
+            output (rap/render template input)
+            expected (slurp (str dir "/expected-" n ".xml"))]
+        (is (xml= output expected))))))
+
+(defmacro test-suites [dirname]
+  (let [suites (for [subdir (directory-listing dirname)]
+                `(deftest ~(symbol (string/replace subdir #"[^\w-]" "-"))
+                   (test-suite ~(string/replace subdir #"\\" "/"))))]
+    `(do ~@suites)))
+
+(test-suites "./test/resources/suites")
+
 

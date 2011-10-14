@@ -1,0 +1,3 @@
+<bar rap:args='x'>
+  <thing value='$x'/>
+</bar>

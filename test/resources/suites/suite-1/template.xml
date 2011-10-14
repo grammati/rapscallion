@@ -1,0 +1,5 @@
+<foo rap:args='a b'>
+
+  <rap:include file='lib-1.xml' args=':x (str a "-" b)' />
+  
+</foo>

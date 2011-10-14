@@ -54,3 +54,6 @@
                 subs (assoc subs sym chunk)]
             (recur more subs meta (conj parts sym)))))))
 
+
+(defn template [s]
+  (compile-template s))                 ;TODO - caching, *template-loader*, etc.
