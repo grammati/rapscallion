@@ -1,6 +1,11 @@
 (ns rapscallion.xml
-  (:require (clojure [xml :as xml]))
-  (:import [java.io Writer]))
+  (:require (clojure [xml :as xml])
+            (clojure.java [io :as io]))
+  (:import [java.io Writer Reader StringReader]
+           [javax.xml.parsers SAXParserFactory]
+           [org.xml.sax Attributes InputSource]
+           [org.xml.sax.ext DefaultHandler2]
+           [org.xml.sax.helpers ParserAdapter]))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -58,14 +63,6 @@
      (into [] (map elementize (:content e))))
     e))
 
-(defn parse
-  "Like clojure.xml/parse, but also accepts a string containing XML."
-  [in]
-  (let [in (if (and (string? in) (.startsWith in "<"))
-             (-> in .getBytes java.io.ByteArrayInputStream.) ;FIXME - not right - encoding!
-             in)]
-    (elementize (clojure.xml/parse in))))
-
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Utilities
@@ -107,6 +104,94 @@
 
 (defn append-content [elt & children]
   (update-in elt [:content] concat children))
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Parsing XML
+
+;; swiped from data.xml:
+(defrecord XmlEvent [type name attrs str])
+
+(defn attrs->map [^Attributes atts]
+  (into {} (for [i (range (.getLength atts))]
+             [(keyword (.getQName atts i))
+              (.getValue atts i)])))
+
+(defmulti event->record (fn [type name data] type))
+
+(defmethod event->record :start-element [_ tag attrs]
+  ())
+
+(defn simple-handler
+  "Return an instance of org.xml.sax.ext.DefaultHandler2 that will
+  handle SAX events by calling the supplied function, passing a vector
+  1, 2 or 3 items, the first being the event type as a keyword, and
+  the other 2 (optional) being the associated data.
+
+  The event types and their associated data are:
+    [:start-element tag attrs]
+    [:end-element tag]
+    [:characters string]
+    :
+  "
+
+  [f]
+  (proxy [DefaultHandler2] []
+    
+    ;; Elements
+    (startElement [uri local-name q-name ^Attributes atts]
+      (f [:start-element (keyword q-name) (attrs->map atts)]))
+    (endElement [uri local-name q-name]
+      (f [:end-element (keyword q-name)]))
+
+    ;; Text
+    (characters [ch start length]
+      (f [:characters (String. ch start length)]))
+
+    ;; Keep track of which text came from a CDATA section
+    (startCDATA []
+      (f [:start-cdata]))
+    (endCDATA []
+      (f [:end-cdata]))
+
+    ;; Processing Instructions
+    (processingInstruction [target data]
+      (f [:processing-instruction target data]))
+
+    ;; Mapping prefixes to namespace URIs
+    (startPrefixMapping [prefix uri]
+      (f [:start-prefix-mapping prefix uri]))
+    (endPrefixMapping [prefix uri]
+      (f [:end-prefix-mapping prefix uri]))
+
+    ;; Comments
+    (comment [ch start length]
+      (f [:comment (String. ch start length)]))
+    
+    ))
+
+(defn parse [in]
+  (let [in (if (and (string? in) (.startsWith in "<"))
+                 (StringReader. in)
+                 (io/reader in))
+        in (doto (InputSource.) (.setCharacterStream in))
+        p  (.. SAXParserFactory newInstance newSAXParser)
+        p  (ParserAdapter. (.getParser p))
+        events (atom [])
+        handler (simple-handler #(swap! events conj %))]
+    (.setContentHandler p handler)
+    (.setProperty p "http://xml.org/sax/properties/lexical-handler" handler)
+    (.parse p in)
+    @events))
+
+#_(defn parse
+  "Like clojure.xml/parse, but also accepts a string containing XML."
+  [in]
+  (let [in (if (and (string? in) (.startsWith in "<"))
+             (-> in .getBytes java.io.ByteArrayInputStream.) ;FIXME - not right - encoding!
+             in)]
+    (elementize (clojure.xml/parse in))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
