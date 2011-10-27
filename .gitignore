@@ -4,6 +4,6 @@ lib
 classes
 bin
 
-\#*#
+\#*
 .lein-failures
 

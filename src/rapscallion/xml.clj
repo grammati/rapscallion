@@ -149,6 +149,9 @@
           (.write ">"))))))
 
 (extend-protocol XMLWritable
+
+  nil
+  (emit-xml [_ _])
   
   clojure.lang.Sequential
   (emit-xml [s ^Writer out]

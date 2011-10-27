@@ -1,7 +1,10 @@
 (ns
     ^{:author "Chris Perkins"
       :doc "The Rapscallion XML generation and transformation library."}
-  rapscallion.newcore)
+  rapscallion.newcore
+  (:require (rapscallion
+             (xml :as xml)))
+  )
 
 
 
@@ -12,7 +15,13 @@
 
 (defn compile-template
   ""
-  [source])
+  [source]
+  (-> source
+      xml/parse-xml
+      generate-code
+      eval-in-ns
+      (with-meta {::template-fn true ::template-source source})))
+
 
 
 (declare ^:dynamic *template-loader*)
@@ -21,6 +30,9 @@
   "Returns a template loader that knows how to load templates from
   files under the given root directory."
   [root]
+  ;; TODO - allow creation of loaders with different (custom?) caching
+  ;; strategies. Eg: production (never check), idle-check, etc.
+  ;; This one checks last-modified time on every call.
   (let [cache (atom nil)]
     ^{:root root}
     (fn loader [source]

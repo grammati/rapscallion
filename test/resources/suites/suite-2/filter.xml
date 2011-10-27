@@ -1,0 +1,10 @@
+ <rap:template>
+   <foo rap:defn='foo [bar]'>
+     $bar $bar
+   </foo>
+   <rap:match expr='aaa/bbb' action='append-sibling'>
+     <rap:call fn='foo'>
+       <yyy/>
+     </rap:call>
+   </rap:match>
+ </rap:template>

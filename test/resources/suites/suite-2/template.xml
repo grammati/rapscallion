@@ -1,0 +1,9 @@
+<rap:template args='x'>
+  
+  <aaa>
+    <bbb>
+      Hello
+    </bbb>
+  </aaa>
+
+</rap:template>

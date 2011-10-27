@@ -510,7 +510,11 @@
        ~@(for [lib (read-all requires)] `(require '~lib))
        ~@(for [lib (read-all uses)]     `(use '~lib))
        ~@(for [lib (read-all imports)]  `(import '~lib))
-       (fn [{:keys [~@args]}] ~compiled))))
+       (fn template-main#
+         ([context#]
+            (template-main# context# nil))
+         ([{:keys [~@args]} in#]
+            [~@compiled in#])))))
 
 (defn dump
   "Print the code generated for the given XML template."
