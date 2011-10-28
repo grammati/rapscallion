@@ -2,10 +2,9 @@
   (:require (clojure [xml :as xml])
             (clojure.java [io :as io]))
   (:import [java.io Writer Reader StringReader]
-           [javax.xml.parsers SAXParserFactory]
            [org.xml.sax Attributes InputSource]
            [org.xml.sax.ext DefaultHandler2]
-           [org.xml.sax.helpers ParserAdapter]))
+           [org.xml.sax.helpers XMLReaderFactory]))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -162,8 +161,8 @@
     ;; Mapping prefixes to namespace URIs
     (startPrefixMapping [prefix uri]
       (f [:start-prefix-mapping prefix uri]))
-    (endPrefixMapping [prefix uri]
-      (f [:end-prefix-mapping prefix uri]))
+    (endPrefixMapping [prefix]
+      (f [:end-prefix-mapping prefix]))
 
     ;; Comments
     (comment [ch start length]
@@ -171,13 +170,22 @@
     
     ))
 
+(defprotocol AsInputSource
+  (input-source [this] "Wrap this object as an instance of org.xml.sax.InputSource"))
+
+(extend-protocol AsInputSource
+  String
+  (input-source [s]
+    (InputSource. (if (.startsWith s "<")
+                    (StringReader. s)
+                    (io/reader s))))
+  Object
+  (input-source [o]
+    (InputSource. (io/reader o))))
+
 (defn parse [in]
-  (let [in (if (and (string? in) (.startsWith in "<"))
-                 (StringReader. in)
-                 (io/reader in))
-        in (doto (InputSource.) (.setCharacterStream in))
-        p  (.. SAXParserFactory newInstance newSAXParser)
-        p  (ParserAdapter. (.getParser p))
+  (let [in (input-source in)
+        p  (XMLReaderFactory/createXMLReader)
         events (atom [])
         handler (simple-handler #(swap! events conj %))]
     (.setContentHandler p handler)
