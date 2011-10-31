@@ -170,6 +170,7 @@
     
     ))
 
+<<<<<<< Updated upstream
 (defprotocol AsInputSource
   (input-source [this] "Wrap this object as an instance of org.xml.sax.InputSource"))
 
@@ -182,6 +183,25 @@
   Object
   (input-source [o]
     (InputSource. (io/reader o))))
+=======
+
+(defn- pipe
+  "Returns a 2-element vector containing:
+   1) a put function for pushing an item into a pipe, and
+   2) a lazy seq of items in the pipe.
+   The seq is potentially infinite, and blocks until there is an item
+   in the pipe. Put the sentinal value (default: nil) into the pipe to
+   signal the end of the seq."
+  ([& [{:keys [capacity sentinel] :or {capacity 32 sentinel nil}}]]
+     (let [q   (java.util.concurrent.LinkedBlockingQueue. (int capacity))
+           NIL (Object.)
+           put #(.offer q (if (nil? %) NIL %))
+           pop #(let [o (.take q)]
+                  (if (identical? o NIL) nil o))
+           s   (take-while #(not= sentinel %) (repeatedly pop))]
+       [put s])))
+
+>>>>>>> Stashed changes
 
 (defn parse [in]
   (let [in (input-source in)
