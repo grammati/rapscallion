@@ -2,6 +2,7 @@
   (:require (clojure [xml :as xml])
             (clojure.java [io :as io]))
   (:import [java.io Writer Reader StringReader]
+           [java.util.concurrent LinkedBlockingQueue]
            [org.xml.sax Attributes InputSource]
            [org.xml.sax.ext DefaultHandler2]
            [org.xml.sax.helpers XMLReaderFactory]))
@@ -110,29 +111,27 @@
 ;; Parsing XML
 
 ;; swiped from data.xml:
-(defrecord XmlEvent [type name attrs str])
-
 (defn attrs->map [^Attributes atts]
   (into {} (for [i (range (.getLength atts))]
              [(keyword (.getQName atts i))
               (.getValue atts i)])))
 
-(defmulti event->record (fn [type name data] type))
-
-(defmethod event->record :start-element [_ tag attrs]
-  ())
-
 (defn simple-handler
   "Return an instance of org.xml.sax.ext.DefaultHandler2 that will
   handle SAX events by calling the supplied function, passing a vector
-  1, 2 or 3 items, the first being the event type as a keyword, and
+  of 1, 2 or 3 items, the first being the event type as a keyword, and
   the other 2 (optional) being the associated data.
 
   The event types and their associated data are:
     [:start-element tag attrs]
     [:end-element tag]
     [:characters string]
-    :
+    [:start-cdata]
+    [:end-cdata]
+    [:processing-instruction target data]
+    [:start-prefix-mapping prefix uri]
+    [:end-prefix-mapping prefix]
+    [:comment text]
   "
 
   [f]
@@ -170,6 +169,28 @@
     
     ))
 
+
+(defn pipe
+  "Returns a `pipe`, as [put s], where put is a function that will put
+  items into the pipe, and s is a blocking seq of the items in the
+  pipe.
+  The optional parameter is a map of options. Supported options are:
+  :capacity - The capacity of the underlying LinkedBlockingQueue.
+              Default: 256 (TBD)
+  :sentinel - A value that signals the end of the seq.
+              Default: nil
+  "
+  [& [{:keys [capacity sentinel] :or {capacity 256 sentinel nil}}]]
+  (let [q   (LinkedBlockingQueue. capacity)
+        NIL (Object.)                   ; LBQ cannot handle real nils
+        put (fn [o] (.put q (if (nil? o) NIL o)))
+        pop (fn [] (let [o (.take q)]
+                     (if (identical? o NIL) nil o)))
+        s   (take-while (partial not= sentinel) (repeatedly pop))]
+    [put s]))
+
+
+
 (defprotocol AsInputSource
   (input-source [this] "Wrap this object as an instance of org.xml.sax.InputSource"))
 
@@ -183,15 +204,20 @@
   (input-source [o]
     (InputSource. (io/reader o))))
 
+()
+
 (defn parse [in]
   (let [in (input-source in)
         p  (XMLReaderFactory/createXMLReader)
-        events (atom [])
-        handler (simple-handler #(swap! events conj %))]
+        [put event-seq] (pipe)
+        handler (simple-handler put)]
     (.setContentHandler p handler)
     (.setProperty p "http://xml.org/sax/properties/lexical-handler" handler)
-    (.parse p in)
-    @events))
+    (future
+      ;; TODO catch exceptions
+      (.parse p in)
+      (put nil))
+    event-seq))
 
 #_(defn parse
   "Like clojure.xml/parse, but also accepts a string containing XML."
