@@ -190,7 +190,6 @@
     [put s]))
 
 
-
 (defprotocol AsInputSource
   (input-source [this] "Wrap this object as an instance of org.xml.sax.InputSource"))
 
@@ -204,7 +203,6 @@
   (input-source [o]
     (InputSource. (io/reader o))))
 
-()
 
 (defn parse [in]
   (let [in (input-source in)
