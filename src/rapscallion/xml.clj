@@ -110,13 +110,36 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Parsing XML
 
+(defn pipe
+  "Returns a `pipe`, as [put s], where put is a function that will put
+  items into the pipe, and s is a blocking seq of the items in the
+  pipe.
+  The optional parameter is a map of options. Supported options are:
+  :capacity - The capacity of the underlying LinkedBlockingQueue.
+              Default: 256 (TBD)
+  :sentinel - A value that signals the end of the seq.
+              Default: nil
+  "
+  ;; TODO - This is not xml-specific - move it somewhere else?
+  ;; TODO - Write a benchmark to choose the "best" default for
+  ;; capacity, and for whether to use Array or Linked blocking queue.
+  [& [{:keys [capacity sentinel] :or {capacity 256 sentinel nil}}]]
+  (let [q   (LinkedBlockingQueue. capacity)
+        NIL (Object.)                   ; LBQ cannot handle real nils
+        put (fn [o] (.put q (if (nil? o) NIL o)))
+        pop (fn [] (let [o (.take q)]
+                     (if (identical? o NIL) nil o)))
+        s   (take-while (partial not= sentinel) (repeatedly pop))]
+    [put s]))
+
+
 ;; swiped from data.xml:
-(defn attrs->map [^Attributes atts]
+(defn attrs->map[^Attributes atts]
   (into {} (for [i (range (.getLength atts))]
              [(keyword (.getQName atts i))
               (.getValue atts i)])))
 
-(defn simple-handler
+(defn make-handler
   "Return an instance of org.xml.sax.ext.DefaultHandler2 that will
   handle SAX events by calling the supplied function, passing a vector
   of 1, 2 or 3 items, the first being the event type as a keyword, and
@@ -170,26 +193,6 @@
     ))
 
 
-(defn pipe
-  "Returns a `pipe`, as [put s], where put is a function that will put
-  items into the pipe, and s is a blocking seq of the items in the
-  pipe.
-  The optional parameter is a map of options. Supported options are:
-  :capacity - The capacity of the underlying LinkedBlockingQueue.
-              Default: 256 (TBD)
-  :sentinel - A value that signals the end of the seq.
-              Default: nil
-  "
-  [& [{:keys [capacity sentinel] :or {capacity 256 sentinel nil}}]]
-  (let [q   (LinkedBlockingQueue. capacity)
-        NIL (Object.)                   ; LBQ cannot handle real nils
-        put (fn [o] (.put q (if (nil? o) NIL o)))
-        pop (fn [] (let [o (.take q)]
-                     (if (identical? o NIL) nil o)))
-        s   (take-while (partial not= sentinel) (repeatedly pop))]
-    [put s]))
-
-
 (defprotocol AsInputSource
   (input-source [this] "Wrap this object as an instance of org.xml.sax.InputSource"))
 
@@ -204,26 +207,32 @@
     (InputSource. (io/reader o))))
 
 
-(defn parse [in]
-  (let [in (input-source in)
-        p  (XMLReaderFactory/createXMLReader)
-        [put event-seq] (pipe)
-        handler (simple-handler put)]
-    (.setContentHandler p handler)
-    (.setProperty p "http://xml.org/sax/properties/lexical-handler" handler)
-    (future
-      ;; TODO catch exceptions
-      (.parse p in)
-      (put nil))
-    event-seq))
-
-#_(defn parse
-  "Like clojure.xml/parse, but also accepts a string containing XML."
+(defn event-seq
   [in]
-  (let [in (if (and (string? in) (.startsWith in "<"))
-             (-> in .getBytes java.io.ByteArrayInputStream.) ;FIXME - not right - encoding!
-             in)]
-    (elementize (clojure.xml/parse in))))
+  (let [in (input-source in)
+        parser  (XMLReaderFactory/createXMLReader)
+        [put events] (pipe)
+        handler (make-handler put)]
+    (.setContentHandler parser handler)
+    (.setProperty parser "http://xml.org/sax/properties/lexical-handler" handler)
+    (future
+      (try
+        (.parse parser in)
+        (catch Exception e
+          (put [:error e]))
+        (finally
+         (put nil))))
+    events))
+
+;;; Transformations of event streams
+(defn merge-text
+  "Transform the event stream so that adjacent bits of text are
+  emitted as a single text event."
+  [[type & _] & events]
+  (lazy-seq
+   (if (= type :characters)
+     (cons [:characters (apply str (map second (take-while)))])))
+  (let [[text events] (split-with text-event? events)]))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
