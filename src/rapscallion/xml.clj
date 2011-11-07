@@ -1,6 +1,7 @@
 (ns rapscallion.xml
   (:require (clojure [xml :as xml])
             (clojure.java [io :as io]))
+  (:use (yoodls.pipe :only [pipe]))
   (:import [java.io Writer Reader StringReader]
            [java.util.concurrent LinkedBlockingQueue]
            [org.xml.sax Attributes InputSource]
@@ -110,36 +111,14 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Parsing XML
 
-(defn pipe
-  "Returns a `pipe`, as [put s], where put is a function that will put
-  items into the pipe, and s is a blocking seq of the items in the
-  pipe.
-  The optional parameter is a map of options. Supported options are:
-  :capacity - The capacity of the underlying LinkedBlockingQueue.
-              Default: 256 (TBD)
-  :sentinel - A value that signals the end of the seq.
-              Default: nil
-  "
-  ;; TODO - This is not xml-specific - move it somewhere else?
-  ;; TODO - Write a benchmark to choose the "best" default for
-  ;; capacity, and for whether to use Array or Linked blocking queue.
-  [& [{:keys [capacity sentinel] :or {capacity 256 sentinel nil}}]]
-  (let [q   (LinkedBlockingQueue. capacity)
-        NIL (Object.)                   ; LBQ cannot handle real nils
-        put (fn [o] (.put q (if (nil? o) NIL o)))
-        pop (fn [] (let [o (.take q)]
-                     (if (identical? o NIL) nil o)))
-        s   (take-while (partial not= sentinel) (repeatedly pop))]
-    [put s]))
-
 
 ;; swiped from data.xml:
 (defn attrs->map[^Attributes atts]
-  (into {} (for [i (range (.getLength atts))]
+  (into {} (for [^Long i (range (.getLength atts))]
              [(keyword (.getQName atts i))
               (.getValue atts i)])))
 
-(defn make-handler
+(defn xml-handler
   "Return an instance of org.xml.sax.ext.DefaultHandler2 that will
   handle SAX events by calling the supplied function, passing a vector
   of 1, 2 or 3 items, the first being the event type as a keyword, and
@@ -167,7 +146,7 @@
       (f [:end-element (keyword q-name)]))
 
     ;; Text
-    (characters [ch start length]
+    (characters [^chars ch ^long start ^long length]
       (f [:characters (String. ch start length)]))
 
     ;; Keep track of which text came from a CDATA section
@@ -187,7 +166,7 @@
       (f [:end-prefix-mapping prefix]))
 
     ;; Comments
-    (comment [ch start length]
+    (comment [^chars ch ^long start ^long length]
       (f [:comment (String. ch start length)]))
     
     ))
@@ -199,20 +178,24 @@
 (extend-protocol AsInputSource
   String
   (input-source [s]
-    (InputSource. (if (.startsWith s "<")
-                    (StringReader. s)
-                    (io/reader s))))
+    (let [^Reader r (if (.startsWith s "<")
+                      (StringReader. s)
+                      (io/reader s))]
+      (InputSource. r)))
+  
   Object
   (input-source [o]
     (InputSource. (io/reader o))))
 
 
 (defn event-seq
+  "Given a source of XML, returns a sequence of events, in the form of
+  vectors. See xml-handler."
   [in]
-  (let [in (input-source in)
+  (let [^InputSource in (input-source in)
         parser  (XMLReaderFactory/createXMLReader)
         [put events] (pipe)
-        handler (make-handler put)]
+        handler (xml-handler put)]
     (.setContentHandler parser handler)
     (.setProperty parser "http://xml.org/sax/properties/lexical-handler" handler)
     (future
@@ -221,19 +204,36 @@
         (catch Exception e
           (put [:error e]))
         (finally
-         (put nil))))
+          (put nil))))
     events))
 
 ;;; Transformations of event streams
 (defn merge-text
   "Transform the event stream so that adjacent bits of text are
-  emitted as a single text event."
-  [[type & _] & events]
-  (lazy-seq
-   (if (= type :characters)
-     (cons [:characters (apply str (map second (take-while)))])))
-  (let [[text events] (split-with text-event? events)]))
+   emitted as a single text event."
+  [events]
+  (letfn [(text? [[type _]]
+            (= :text type))
+          (merge-if-text [[e & _ :as  evts]]
+            (if (text? e)
+              (list [:text (apply str (map second evts))])
+              evts))]
+    (->> events
+         (partition-by text?)
+         (map merge-if-text)
+         (apply concat))))
 
+
+(defn ignore [events & event-types]
+  (let [ignores (set event-types)]
+    (remove (fn [e] (ignores (v 0))) events)))
+
+(defn parse [in]
+  (-> in
+      event-seq
+      merge-text
+      (ignore :start-cdata :end-cdata)
+      ))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Emitting XML
