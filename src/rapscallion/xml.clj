@@ -1,7 +1,7 @@
 (ns rapscallion.xml
   (:require (clojure [xml :as xml])
             (clojure.java [io :as io]))
-  (:use (yoodls [pipe :only [pipe]]))
+  (:use (yoodls [pipe :only [pipe pipe-map]]))
   (:import [java.io Writer Reader StringReader]
            [java.util.concurrent LinkedBlockingQueue]
            [org.xml.sax Attributes InputSource]
@@ -188,7 +188,7 @@
     (InputSource. (io/reader o))))
 
 
-(defn event-seq
+(defn sax-seq
   "Given a source of XML, returns a sequence of events, in the form of
   vectors. See xml-handler."
   [in]
@@ -198,6 +198,8 @@
         handler (xml-handler put)]
     (.setContentHandler parser handler)
     (.setProperty parser "http://xml.org/sax/properties/lexical-handler" handler)
+    (.setFeature parser "http://xml.org/sax/features/namespaces" false)
+    ;;(.setFeature parser "http://xml.org/sax/features/namespace-prefixes" false)
     (future
       (try
         (.parse parser in)
@@ -208,6 +210,13 @@
     events))
 
 ;;; Transformations of event streams
+(defn throw-on-error [events]
+  (map (fn [[type ex :as evt]]
+         (if (= :error type)
+           (throw ex)
+           evt))
+       events))
+
 (defn merge-text
   "Transform the event stream so that adjacent bits of text are
    emitted as a single text event."
@@ -238,7 +247,6 @@
    2) A seq of the unconsumed events.
   "
   [events]
-  (println events)
   (loop [[[type :as evt] & events] events
          xml []]
     (case type
@@ -252,9 +260,7 @@
       (recur events (conj xml (evt 1)))
 
       (:end-element nil)
-      (do
-        (println "Returning: " xml)
-        [xml events])
+      [xml events]
       
       )))
 
@@ -262,11 +268,12 @@
 
 (defn parse [in]
   (-> in
-      event-seq
+      sax-seq
+      throw-on-error
       merge-text
-      ;;(ignore :start-cdata :end-cdata)
-      ;;(ignore :start-prefix-mapping :end-prefix-mapping)
-      ;;(ignore :comment)
+      (ignore :start-cdata :end-cdata)
+      (ignore :start-prefix-mapping :end-prefix-mapping)
+      (ignore :comment)
       to-nodes
       ffirst
       ))
