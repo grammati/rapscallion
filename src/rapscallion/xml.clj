@@ -1,7 +1,7 @@
 (ns rapscallion.xml
   (:require (clojure [xml :as xml])
             (clojure.java [io :as io]))
-  (:use (yoodls.pipe :only [pipe]))
+  (:use (yoodls [pipe :only [pipe]]))
   (:import [java.io Writer Reader StringReader]
            [java.util.concurrent LinkedBlockingQueue]
            [org.xml.sax Attributes InputSource]
@@ -127,7 +127,7 @@
   The event types and their associated data are:
     [:start-element tag attrs]
     [:end-element tag]
-    [:characters string]
+    [:text string]
     [:start-cdata]
     [:end-cdata]
     [:processing-instruction target data]
@@ -147,7 +147,7 @@
 
     ;; Text
     (characters [^chars ch ^long start ^long length]
-      (f [:characters (String. ch start length)]))
+      (f [:text (String. ch start length)]))
 
     ;; Keep track of which text came from a CDATA section
     (startCDATA []
@@ -178,7 +178,7 @@
 (extend-protocol AsInputSource
   String
   (input-source [s]
-    (let [^Reader r (if (.startsWith s "<")
+    (let [^Reader r (if (.startsWith s "<") ;; too "clever"? ... <shrug>
                       (StringReader. s)
                       (io/reader s))]
       (InputSource. r)))
@@ -224,15 +224,51 @@
          (apply concat))))
 
 
-(defn ignore [events & event-types]
-  (let [ignores (set event-types)]
-    (remove (fn [e] (ignores (v 0))) events)))
+(defn ignore
+  "Filters out events of the given types."
+  [events & event-types]
+  (let [ignored-types (set event-types)
+        ignorable? (fn [[type]] (ignored-types type))]
+    (remove ignorable? events)))
+
+
+(defn to-nodes
+  "Returns a 2-element vector containing:
+   1) A seq of sibling nodes extracted from the event stream, and
+   2) A seq of the unconsumed events.
+  "
+  [events]
+  (println events)
+  (loop [[[type :as evt] & events] events
+         xml []]
+    (case type
+      :start-element
+      (let [[_ tag attrs] evt
+            [children events] (to-nodes events)]
+        (recur events
+               (conj xml (Element. tag attrs children))))
+
+      :text
+      (recur events (conj xml (evt 1)))
+
+      (:end-element nil)
+      (do
+        (println "Returning: " xml)
+        [xml events])
+      
+      )))
+
+
 
 (defn parse [in]
   (-> in
       event-seq
       merge-text
-      (ignore :start-cdata :end-cdata)
+      ;;(ignore :start-cdata :end-cdata)
+      ;;(ignore :start-prefix-mapping :end-prefix-mapping)
+      ;;(ignore :comment)
+      to-nodes
+      ffirst
       ))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
