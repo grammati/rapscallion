@@ -192,6 +192,9 @@
                       (StringReader. s)
                       (io/reader s))]
       (InputSource. r)))
+
+  InputSource
+  (as-input-source [this] this)
   
   Object
   (as-input-source [o]
@@ -200,24 +203,36 @@
 
 (defn sax-seq
   "Given a source of XML, returns a sequence of events, in the form of
-  vectors. See xml-handler."
-  [in]
-  (let [^InputSource in (as-input-source in)
-        parser  (XMLReaderFactory/createXMLReader)
-        [put events] (pipe/pipe)
-        handler (xml-handler put)]
+  vectors of [type data ...]. See xml-handler for details."
+  [in & [opts]]
+  (let [{:keys [namespaces]
+         :or   {namespaces true}} opts
+         
+        ^InputSource in (as-input-source in)
+        parser          (XMLReaderFactory/createXMLReader)
+        [put event-seq] (pipe/pipe)
+        handler         (xml-handler put)]
+    
     (.setContentHandler parser handler)
+    
+    ;; Set the "lexical-handler" property in order to get
+    ;; start-prefix-mapping & end-prefix-mapping events.
     (.setProperty parser "http://xml.org/sax/properties/lexical-handler" handler)
-    (.setFeature parser "http://xml.org/sax/features/namespaces" false)
-    ;;(.setFeature parser "http://xml.org/sax/features/namespace-prefixes" false)
+    
+    ;; Setting this to true means that undeclared namespace-prefixes
+    ;; will be an error.
+    (.setFeature parser "http://xml.org/sax/features/namespaces" namespaces)
+
+    ;; Run the SAX parser in a thread.
     (future
       (try
         (.parse parser in)
         (catch Exception e
           (put [:error e]))
         (finally
-          (put nil))))
-    events))
+         (put nil))))
+
+    event-seq))
 
 ;;; Transformations of event streams
 (defn throw-if-error [[type ex :as evt]]
@@ -229,7 +244,7 @@
   (map throw-if-error events))
 
 
-(defn merge-text
+(defn merge-adjacent-text
   "Transform the event stream so that adjacent bits of text are
    emitted as a single text event."
   [events]
@@ -265,42 +280,80 @@
    2) A seq of the unconsumed events.
   "
   [events]
-  (loop [[[type :as evt] & events] events
-         xml []]
+  (loop [nodes []
+         [[type data :as evt] & events] events
+         ns-stack (list nil)]
+    
     (case type
+      
       :start-element
-      (let [[_ tag attrs] evt
-            [children events] (events->nodes events)]
-        (recur events
-               (conj xml (Element. tag attrs children))))
+      (let [[_ tag attrs]     evt
+            [children events] (events->nodes events)
+            elt               (Element. tag attrs children)]
+        (recur (conj nodes (with-meta elt {:xmlns (peek ns-stack)}))
+               events
+               ns-stack))
 
       :text
-      (recur events (conj xml (evt 1)))
+      (recur (conj nodes data)
+             events
+             ns-stack)
 
+      :comment
+      (recur (conj nodes (Comment. data))
+             events
+             ns-stack)
+
+      :start-cdata
+      (let [[text-nodes [end-cdata & events]]
+            (split-with (fn [[type]] (= type :text)) events)]
+        (assert (= (end-cdata 0) :end-cdata) "Expected :end-cdata event.")
+        (recur (conj nodes (CData. (apply str (map second text-nodes))))
+               events
+               ns-stack))
+
+      :processing-instruction
+      (let [[_ target text] evt]
+        (recur (conj nodes (PI. target text))
+               events
+               ns-stack))
+
+      :start-prefix-mapping
+      (let [[_ prefix uri] evt
+            ns-map (assoc (peek ns-stack) uri prefix)]
+        (recur nodes events (conj ns-stack ns-map)))
+
+      :end-prefix-mapping
+      (recur nodes events (pop ns-stack))
+      
       (:end-element nil)
-      [xml events]
+      [nodes events]
       
       )))
 
 (defn make-tree [events]
-  (let [[[root & nodes] events] (events->nodes events)]
+  (let [[nodes events] (events->nodes events)]
     (when (seq events)
+      ;; This shouldn't be possible if the source of the events is an
+      ;; actual SAX parser, but could happen for an event-seq from
+      ;; some other source.
       (parse-error "Unconsumed SAX events: " events))
-    (when nodes
-      (parse-error "Content after root element: " nodes))
-    root))
+    nodes))
 
-(defn parse [source & [opts]]
+(defn parse
+  "Returns a seq of top-level XML nodes."
+  [source & [opts]]
   (-> source
-      sax-seq
+      (sax-seq opts)
       throw-on-error
-      merge-text
+      merge-adjacent-text
       skip-whitespace
       (ignore
-       :processing-instruction
-       :start-cdata :end-cdata
-       :start-prefix-mapping :end-prefix-mapping
-       :comment)
+        ;:processing-instruction
+        ;:start-cdata :end-cdata
+        ;:start-prefix-mapping :end-prefix-mapping
+        ;:comment
+        )
       make-tree
       ))
 
