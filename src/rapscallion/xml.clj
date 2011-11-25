@@ -275,9 +275,9 @@
 
 
 (defn events->nodes
-  "Returns a 2-element vector containing:
-   1) A seq of sibling nodes extracted from the event stream, and
-   2) A seq of the unconsumed events.
+  "Takes a seq of SAX events, and returns a 2-element vector of:
+   1 - A seq of nodes extracted from the event seq, and
+   2 - A seq of the unconsumed events.
   "
   [events]
   (loop [nodes []
@@ -285,6 +285,14 @@
          ns-stack (list nil)]
     
     (case type
+      
+      :start-prefix-mapping
+      (let [[_ prefix uri] evt
+            ns-map (assoc (peek ns-stack) uri prefix)]
+        (recur nodes events (conj ns-stack ns-map)))
+
+      :end-prefix-mapping
+      (recur nodes events (pop ns-stack))
       
       :start-element
       (let [[_ tag attrs]     evt
@@ -318,20 +326,14 @@
                events
                ns-stack))
 
-      :start-prefix-mapping
-      (let [[_ prefix uri] evt
-            ns-map (assoc (peek ns-stack) uri prefix)]
-        (recur nodes events (conj ns-stack ns-map)))
-
-      :end-prefix-mapping
-      (recur nodes events (pop ns-stack))
-      
       (:end-element nil)
       [nodes events]
       
       )))
 
-(defn make-tree [events]
+(defn make-tree
+  "Takes a seq of SAX events and returns a vector of the top-level nodes."
+  [events]
   (let [[nodes events] (events->nodes events)]
     (when (seq events)
       ;; This shouldn't be possible if the source of the events is an
@@ -340,22 +342,100 @@
       (parse-error "Unconsumed SAX events: " events))
     nodes))
 
+;; New default parse options.
+(def default-parse-options
+  {:namespaces      true
+   :keep-whitespace false
+   :comments        true
+   :cdata           true
+   :processing-instructions true
+   })
+
+;; For backward-compatibility. Options for parsing clojure.xml-style.
+(def old-parse-options
+  {:namespaces      false
+   :keep-whitespace false
+   :comments        false
+   :cdata           false
+   :processing-instructions false
+   })
+
+(def ^{:dynamic true} *parse-options* default-parse-options)
+
 (defn parse
-  "Returns a seq of top-level XML nodes."
+  "Takes something convertable to a InputSource, and returns a vector
+   of top-level XML nodes.
+
+   The opts parameter is an optional map of options. The defaults for
+   all options are in the map *parse-options*, which is rebindable.
+
+     :keep-whitespace
+       If true, whitespace-only text nodes are kept, othewise they
+       are discarded.
+
+     :comments
+     :cdata
+     :processing-instructions
+       If false, nodes of the corresponding type are discarded.
+
+     :namespaces
+       Sets namespace-awareness in the SAX parser.
+   "
+  
   [source & [opts]]
-  (-> source
-      (sax-seq opts)
-      throw-on-error
-      merge-adjacent-text
-      skip-whitespace
-      (ignore
-        ;:processing-instruction
-        ;:start-cdata :end-cdata
-        ;:start-prefix-mapping :end-prefix-mapping
-        ;:comment
-        )
-      make-tree
-      ))
+  
+  ;; This works by producing a seq of SAX-events, and then running it
+  ;; through a series of transformations. This should allow quite a
+  ;; bit flexibility in deciding exactly which transformations to
+  ;; apply, at the cost of being slightly less efficient - for
+  ;; example, events for comments, processing-instructions, etc. may
+  ;; be produced by the parser and added to the seq, but then
+  ;; ignored. This inefficiency should be ameliorated somewhat by the
+  ;; fact that those types of nodes relatively rare in XML.
+  
+  (let [;; Use defaults for options unless overridden.
+        {:keys [namespaces
+                comments cdata processing-instructions
+                keep-whitespace]} (merge *parse-options* opts)
+
+        ;; First, run the SAX parser to produce the full sequence of
+        ;; events. Give it the nice short name "e", since it will be
+        ;; repeated a lot.
+        e (sax-seq source opts)
+
+        ;; Since the SAX parser runs in another thread, parsing errors
+        ;; are caught and put into the event-seq as [:error
+        ;; <exception>].  This transformation will re-throw them.
+        e (throw-on-error e)
+
+        ;; SAX parsers can emit multiple "characters" events for one
+        ;; piece of text (for example, when it contains entities, such
+        ;; as &amp;). It's generally more convenient to work with
+        ;; adjacent text nodes merged into one.
+        e (merge-adjacent-text e)
+
+        ;; Optionally discard whitespace-only nodes
+        e (if keep-whitespace e (skip-whitespace e))
+
+        ;; Figure out which types of node to ignore.
+        ignores (reduce into nil
+                        [(when-not comments [:comment])
+                         (when-not cdata [:start-cdata :end-cdata])
+                         (when-not processing-instructions [:processing-instruction])
+                         ;; Maybe don't need this line (the parser
+                         ;; won't emit these anyway, right?):
+                         (when-not namespaces [:start-prefix-mapping :end-prefix-mapping])
+                         ])
+
+        ;; Skip ignorable events
+        e (if ignores (apply ignore e ignores) e)
+        ]
+
+    ;; Finally, turn the resulting event-seq into a tree (almost) of
+    ;; nodes. This actually returns all the top-level nodes, which
+    ;; should consist of exactly one Element, as well as any number of
+    ;; Comments and PIs preceeding and/or following the Element.
+    (make-tree e)))
 
 
 
