@@ -1,7 +1,8 @@
 (ns rapscallion.xml
-  (:require (clojure [xml :as xml])
-            (clojure.java [io :as io]))
-  (:use (yoodls [pipe :only [pipe pipe-map]]))
+  (:require (clojure [xml :as xml]
+                     [string :as  string])
+            (clojure.java [io :as io])
+            (yoodls [pipe :as pipe]))
   (:import [java.io Writer Reader StringReader]
            [java.util.concurrent LinkedBlockingQueue]
            [org.xml.sax Attributes InputSource]
@@ -21,9 +22,9 @@
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Records
+;; Records for XML node types
 
-(declare emit-element)
+(declare emit-element emit-comment emit-cdata emit-pi)
 
 (defrecord Element [tag attrs content]
   
@@ -36,6 +37,21 @@
   (emit-xml [this out]
     (emit-element this out))
   )
+
+(defrecord Comment [^String text]
+  XMLWritable
+  (emit-xml [this out]
+    (emit-comment this out)))
+
+(defrecord CData [^String text]
+  XMLWritable
+  (emit-xml [this out]
+    (emit-cdata this out)))
+
+(defrecord PI [^String target ^String text]
+  XMLWritable
+  (emit-xml [this out]
+    (emit-pi this out)))
 
 
 (defn element
@@ -52,17 +68,20 @@
 ;;; Alias for the Element class
 (def element-type Element)
 
-
-
 (defn- elementize
-  "This is used to turn a tree of "
+  "This is used to turn a tree of element-like maps into a tree of
+  Element instances."
+  ;; TODO - is this still used anywhere?
   [e]
-  (if (and (map? e) (:tag e))
+  (if (and (not (element? e))
+           (map? e)
+           (:tag e))
     (Element.
      (:tag e)
      (:attrs e)
      (into [] (map elementize (:content e))))
     e))
+
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -76,17 +95,6 @@
 
 (defn merge-attrs [elt new-attrs]
   (assoc elt :attrs (merge (:attrs elt) new-attrs))) ;TODO - skip nils
-
-(defn dissoc-in [m ks]
-  (let [k (last ks)
-        ks (butlast ks)]
-    (if ks
-      (if-let [mm (get-in m ks)]
-        (assoc-in m ks (dissoc mm k))
-        m)
-      (if k
-        (dissoc m k)
-        m))))
 
 (defn dissoc-attr [elt & attrs]
   (assoc elt :attrs (apply dissoc (:attrs elt) attrs)))
@@ -111,6 +119,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Parsing XML
 
+(defn parse-error [& messages]
+  (throw (RuntimeException. (apply str messages))))
 
 ;; swiped from data.xml:
 (defn attrs->map[^Attributes atts]
@@ -173,18 +183,18 @@
 
 
 (defprotocol AsInputSource
-  (input-source [this] "Wrap this object as an instance of org.xml.sax.InputSource"))
+  (as-input-source [this] "Wrap this object as an instance of org.xml.sax.InputSource"))
 
 (extend-protocol AsInputSource
   String
-  (input-source [s]
+  (as-input-source [s]
     (let [^Reader r (if (.startsWith s "<") ;; too "clever"? ... <shrug>
                       (StringReader. s)
                       (io/reader s))]
       (InputSource. r)))
   
   Object
-  (input-source [o]
+  (as-input-source [o]
     (InputSource. (io/reader o))))
 
 
@@ -192,9 +202,9 @@
   "Given a source of XML, returns a sequence of events, in the form of
   vectors. See xml-handler."
   [in]
-  (let [^InputSource in (input-source in)
+  (let [^InputSource in (as-input-source in)
         parser  (XMLReaderFactory/createXMLReader)
-        [put events] (pipe)
+        [put events] (pipe/pipe)
         handler (xml-handler put)]
     (.setContentHandler parser handler)
     (.setProperty parser "http://xml.org/sax/properties/lexical-handler" handler)
@@ -210,12 +220,14 @@
     events))
 
 ;;; Transformations of event streams
+(defn throw-if-error [[type ex :as evt]]
+  (if (= :error type)
+    (throw ex)
+    evt))
+
 (defn throw-on-error [events]
-  (map (fn [[type ex :as evt]]
-         (if (= :error type)
-           (throw ex)
-           evt))
-       events))
+  (map throw-if-error events))
+
 
 (defn merge-text
   "Transform the event stream so that adjacent bits of text are
@@ -233,6 +245,12 @@
          (apply concat))))
 
 
+(defn skip-whitespace [events]
+  (remove (fn [[type s :as evt]]
+            (and (= type :text)
+                 (string/blank? s)))
+          events))
+
 (defn ignore
   "Filters out events of the given types."
   [events & event-types]
@@ -241,7 +259,7 @@
     (remove ignorable? events)))
 
 
-(defn to-nodes
+(defn events->nodes
   "Returns a 2-element vector containing:
    1) A seq of sibling nodes extracted from the event stream, and
    2) A seq of the unconsumed events.
@@ -252,7 +270,7 @@
     (case type
       :start-element
       (let [[_ tag attrs] evt
-            [children events] (to-nodes events)]
+            [children events] (events->nodes events)]
         (recur events
                (conj xml (Element. tag attrs children))))
 
@@ -264,19 +282,29 @@
       
       )))
 
+(defn make-tree [events]
+  (let [[[root & nodes] events] (events->nodes events)]
+    (when (seq events)
+      (parse-error "Unconsumed SAX events: " events))
+    (when nodes
+      (parse-error "Content after root element: " nodes))
+    root))
 
-
-(defn parse [in]
-  (-> in
+(defn parse [source & [opts]]
+  (-> source
       sax-seq
       throw-on-error
       merge-text
-      (ignore :start-cdata :end-cdata)
-      (ignore :start-prefix-mapping :end-prefix-mapping)
-      (ignore :comment)
-      to-nodes
-      ffirst
+      skip-whitespace
+      (ignore
+       :processing-instruction
+       :start-cdata :end-cdata
+       :start-prefix-mapping :end-prefix-mapping
+       :comment)
+      make-tree
       ))
+
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Emitting XML
@@ -284,14 +312,19 @@
 (defn ^String xml-escape [^String s]
   (-> s
       (.replaceAll "&"  "&amp;")
-      (.replaceAll "<"  "&lt;")
-      ))
+      (.replaceAll "<"  "&lt;")))
 
 (defn ^String xml-escape-attr [^String s]
   (-> s
       xml-escape
-      (.replaceAll "'"  "&apos;")
-      ))
+      (.replaceAll "'"  "&apos;")))
+
+(defn ^String xml-escape-comment [^String s]
+  ;; Comment text can't contain -->
+  (-> s
+      xml-escape
+      (.replaceAll "-->" "--&gt;")))
+
 
 (defn emit-element [^Element e ^Writer out]
   (let [{:keys [tag attrs content]} e]
@@ -317,6 +350,33 @@
           (.write (name tag))
           (.write ">"))))))
 
+(defn emit-comment [^Comment c ^Writer out]
+  (doto out
+    (.write "<!--")
+    (.write (xml-escape-comment (.text c)))
+    (.write "-->")))
+
+(defn emit-cdata [^CData cd ^Writer out]
+  (when (.contains (.text cd) "]]>")
+    (throw (IllegalArgumentException. "Illegal end sequence in CDATA text.")))
+  (doto out
+    (.write "<![CDATA[")
+    (.write (.text cd))
+    (.write "]]>")))
+
+(defn emit-pi [^PI pi ^Writer out]
+  (let [{:keys [target text]} pi]
+    ;; TODO - validate target: http://www.w3.org/TR/REC-xml/#sec-pi
+    (when (.contains text "?>")
+      (throw (IllegalArgumentException. "Illegal end sequence in processing instruction " target)))
+    (doto out
+      (.write "<?")
+      (.write target)
+      (.write " ")
+      (.write text)
+      (.write "?>"))))
+
+
 (extend-protocol XMLWritable
 
   nil
@@ -336,6 +396,7 @@
     (emit-xml (str o) out))
   
   )
+
 
 (defn emit
   "Turn an element into a String of XML."
