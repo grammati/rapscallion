@@ -1,14 +1,14 @@
 (ns rapscallion.test.samples
-  (:require (rapscallion 
-              (core :as rap)
-              (xml :as xml)
-              (text :as text)
-              ))
-  (:require (clojure (string :as string)))
-  (:use clojure.test)
-  (:use (rapscallion.test (core :only [xml=])))
-  )
-  
+  (:require [rapscallion 
+              [core :as rap]
+              [xml :as xml]
+              [text :as text]]
+            [clojure
+             [string :as string]])
+  (:use [clojure.test]
+        [rapscallion.test.xml :only [xml=]]))
+
+
 (defn eval-file [#^java.io.File f]
   (eval (read (java.io.PushbackReader. (java.io.FileReader. f)))))
 

@@ -1,6 +1,8 @@
-(ns rapscallion.xml
-  (:require (clojure [xml :as xml]
-                     [string :as  string])
+(ns
+    ^{:doc "XML"
+      :author "Chris Perkins"}
+  rapscallion.xml
+  (:require (clojure [string :as  string])
             (clojure.java [io :as io])
             (yoodls [pipe :as pipe]))
   (:import [java.io Writer Reader StringReader]
@@ -79,7 +81,7 @@
     (Element.
      (:tag e)
      (:attrs e)
-     (into [] (map elementize (:content e))))
+     (map elementize (:content e)))
     e))
 
 
@@ -120,7 +122,7 @@
 ;; Parsing XML
 
 (defn parse-error [& messages]
-  (throw (RuntimeException. (apply str messages))))
+  (throw (IllegalArgumentException. (apply str messages))))
 
 ;; swiped from data.xml:
 (defn attrs->map[^Attributes atts]
@@ -248,19 +250,20 @@
   "Transform the event stream so that adjacent bits of text are
    emitted as a single text event."
   [events]
-  (letfn [(text? [[type _]]
+  (letfn [(text? [[type]]
             (= :text type))
-          (merge-if-text [[e & _ :as  evts]]
+          (merge-if-text [[e :as  evts]]
             (if (text? e)
               (list [:text (apply str (map second evts))])
               evts))]
     (->> events
          (partition-by text?)
-         (map merge-if-text)
-         (apply concat))))
+         (mapcat merge-if-text))))
 
 
-(defn skip-whitespace [events]
+(defn skip-whitespace
+  "Filters out whitespace-only text events."
+  [events]
   (remove (fn [[type s :as evt]]
             (and (= type :text)
                  (string/blank? s)))
@@ -279,16 +282,20 @@
    1 - A seq of nodes extracted from the event seq, and
    2 - A seq of the unconsumed events.
   "
-  [events]
+  [events & [xmlns-prefix-map]]
+
+  ;; Notes: I tried for a while to make this consume the event-seq
+  ;;        lazily, but that made my brain explode.
+  
   (loop [nodes []
          [[type data :as evt] & events] events
-         ns-stack (list nil)]
+         ns-stack (list xmlns-prefix-map)]
     
     (case type
       
       :start-prefix-mapping
       (let [[_ prefix uri] evt
-            ns-map (assoc (peek ns-stack) uri prefix)]
+            ns-map (assoc-in (peek ns-stack) [:xmlns uri] prefix)]
         (recur nodes events (conj ns-stack ns-map)))
 
       :end-prefix-mapping
@@ -296,7 +303,7 @@
       
       :start-element
       (let [[_ tag attrs]     evt
-            [children events] (events->nodes events)
+            [children events] (events->nodes events (peek ns-stack))
             elt               (Element. tag attrs children)]
         (recur (conj nodes (with-meta elt {:xmlns (peek ns-stack)}))
                events
@@ -452,12 +459,6 @@
       xml-escape
       (.replaceAll "'"  "&apos;")))
 
-(defn ^String xml-escape-comment [^String s]
-  ;; Comment text can't contain -->
-  (-> s
-      xml-escape
-      (.replaceAll "-->" "--&gt;")))
-
 
 (defn emit-element [^Element e ^Writer out]
   (let [{:keys [tag attrs content]} e]
@@ -484,14 +485,16 @@
           (.write ">"))))))
 
 (defn emit-comment [^Comment c ^Writer out]
+  (when (.contains (.text c) "--")
+    (throw (IllegalArgumentException. "Illegal double-dash, \"--\", in comment.")))
   (doto out
     (.write "<!--")
-    (.write (xml-escape-comment (.text c)))
+    (.write (.text c))
     (.write "-->")))
 
 (defn emit-cdata [^CData cd ^Writer out]
   (when (.contains (.text cd) "]]>")
-    (throw (IllegalArgumentException. "Illegal end sequence in CDATA text.")))
+    (throw (IllegalArgumentException. "Illegal end sequence, \"]]>\", in CDATA text.")))
   (doto out
     (.write "<![CDATA[")
     (.write (.text cd))
@@ -501,7 +504,7 @@
   (let [{:keys [target text]} pi]
     ;; TODO - validate target: http://www.w3.org/TR/REC-xml/#sec-pi
     (when (.contains text "?>")
-      (throw (IllegalArgumentException. "Illegal end sequence in processing instruction " target)))
+      (throw (IllegalArgumentException. "Illegal end sequence, \"?>\", in processing instruction." target)))
     (doto out
       (.write "<?")
       (.write target)
@@ -532,8 +535,19 @@
 
 
 (defn emit
-  "Turn an element into a String of XML."
-  [elt]
-  (with-out-str
-    (emit-xml elt *out*)))
+  "Writes out the given object as XML.
+
+  With one argument, returns the XML as a String.
+  Otherwise, writes to the Writer supplied as the second argument.
+
+  Note that the nodes argument can be of any type that implements
+  the XmlWritable protocol, including a seq of other XmlWritable
+  objects.
+  "
+  ([nodes]
+     (let [to (java.io.StringWriter.)]
+       (emit-xml nodes to)
+       (str to)))
+  ([elts to]
+     (emit-xml elts to)))
 
