@@ -121,7 +121,49 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Parsing XML
 
-(defn parse-error [& messages]
+(def ^:dynamic *xmlns-aware*
+  "Determines whether parsing is XML-namespace-aware.
+
+   When set to false, XML namespaces are more-or-less ignored, and
+   tags and attributes are stored as they appear textually in the
+   XML, including prefixes.
+
+   When set to true, namespace URIs are stored as part of Elements'
+   values, and prefix information is stored in metadata.
+
+   Specifically, setting this when parsing causes the following
+   differences in the resulting tree, where each point below lists the
+   effects of setting *xmlns-aware* to true (t) or false (f):
+
+    * xmlns declarations:
+       t: stored in metadata as :xmlns-decls
+       f: present in the attrs map, like regular attributes
+        
+    * The ns field of Elements:
+       t: the namespace URI (or nil, for the default namespace)
+       f: always nil
+
+    * The tag field of Elements:
+       t: the localName only (no prefix)
+       f: the QName (prefix:tagname)
+
+    * Unprefixed attributes:
+       t: attribute name as a keyword
+       f: attribute name as a keyword
+
+    * Prefixed (namespaced) attributes:
+       t: vector of [:localName ns-uri], with {:prefix prefix} metadata
+       f: the QName as a keyword (prefix:attrname)
+
+    * Other stuff that I can't remember right now:
+       t: ???
+       f: ???
+
+  "
+  true)
+
+
+(defn- parse-error [& messages]
   (throw (IllegalArgumentException. (apply str messages))))
 
 ;; swiped from data.xml:
