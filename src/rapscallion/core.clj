@@ -121,7 +121,7 @@
   (str x))
 
 ;; Elements are inserted as-is.
-(defmethod xml-value xml/element-type [x]
+(defmethod xml-value Element [x]
   x)
 
 (defmethod xml-value clojure.lang.Sequential [x]
@@ -477,7 +477,7 @@
         compiled (if (nil? compiled) nil `(flatseq ~compiled))] ;TODO - be smarter here
     (assoc elt :content compiled)))
         
-(defmethod compile-xml xml/element-type [elt]
+(defmethod compile-xml Element [elt]
   (-> elt
       extract-directives
       process-content
@@ -488,10 +488,11 @@
 (defn- de-elementize
   "We work with Element instances at compile-time, but they do not
    self-evaluate like normal maps do. Convert them into an eval-able form."
+  ;; TODO - I don't think I need this in clojure 1.3+ ... confirm.
   [x]
   (walk/prewalk
    (fn [e]
-     (if (instance? xml/element-type e)
+     (if (xml/element? e)
        (list 'rapscallion.xml.Element. (:tag e) (:attrs e) (:content e))
        e))
    x))

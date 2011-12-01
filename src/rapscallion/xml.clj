@@ -6,7 +6,6 @@
             (clojure.java [io :as io])
             (yoodls [pipe :as pipe]))
   (:import [java.io Writer Reader StringReader]
-           [java.util.concurrent LinkedBlockingQueue]
            [org.xml.sax Attributes InputSource]
            [org.xml.sax.ext DefaultHandler2]
            [org.xml.sax.helpers XMLReaderFactory]))
@@ -17,77 +16,44 @@
 (defprotocol ElementAccessor
   (tag [this] "Return the tag of the element")
   (attrs [this] "Return a map of the attributes of the element")
-  (content [this] "Return a sequence of children of the element"))
-
-(defprotocol XMLWritable
-  (emit-xml [this ^Writer out]))
+  (content [this] "Return a sequence of children of the element")
+  (uri [this] "Return the namespace URI of the element"))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Records for XML node types
 
-(declare emit-element emit-comment emit-cdata emit-pi)
-
-(defrecord Element [tag attrs content]
-  
+(defrecord Element [tag attrs content uri]
   ElementAccessor
   (tag [this] tag)
   (attrs [this] attrs)
   (content [this] content)
-  
-  XMLWritable
-  (emit-xml [this out]
-    (emit-element this out))
-  )
+  (uri [this] uri))
 
-(defrecord Comment [^String text]
-  XMLWritable
-  (emit-xml [this out]
-    (emit-comment this out)))
+(defrecord Comment [^String text])
 
-(defrecord CData [^String text]
-  XMLWritable
-  (emit-xml [this out]
-    (emit-cdata this out)))
+(defrecord CData [^String text])
 
-(defrecord PI [^String target ^String text]
-  XMLWritable
-  (emit-xml [this out]
-    (emit-pi this out)))
+(defrecord PI [^String target ^String text])
 
 
 (defn element
   "Factory function to return an element."
-  ([tag] (element tag nil nil))
-  ([tag attrs] (element tag attrs nil))
-  ([tag attrs content] (Element. tag attrs content)))
+  ([tag]                   (Element. tag nil   nil     nil))
+  ([tag attrs]             (Element. tag attrs nil     nil))
+  ([tag attrs content]     (Element. tag attrs content nil))
+  ([tag attrs content uri] (Element. tag attrs content uri)))
 
 (defn element?
   "Returns true if the given object is an element."
   [e]
   (instance? Element e))
 
-;;; Alias for the Element class
-(def element-type Element)
-
-(defn- elementize
-  "This is used to turn a tree of element-like maps into a tree of
-  Element instances."
-  ;; TODO - is this still used anywhere?
-  [e]
-  (if (and (not (element? e))
-           (map? e)
-           (:tag e))
-    (Element.
-     (:tag e)
-     (:attrs e)
-     (map elementize (:content e)))
-    e))
-
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Utilities
+;; TODO - clean up, docstrings, etc.
 
 (defn get-attr [elt attr]
   (get-in elt [:attrs attr]))
@@ -166,11 +132,6 @@
 (defn- parse-error [& messages]
   (throw (IllegalArgumentException. (apply str messages))))
 
-;; swiped from data.xml:
-(defn attrs->map[^Attributes atts]
-  (into {} (for [^Long i (range (.getLength atts))]
-             [(keyword (.getQName atts i))
-              (.getValue atts i)])))
 
 (defn xml-handler
   "Return an instance of org.xml.sax.ext.DefaultHandler2 that will
@@ -195,7 +156,7 @@
     
     ;; Elements
     (startElement [uri local-name q-name ^Attributes atts]
-      (f [:start-element (keyword q-name) (attrs->map atts)]))
+      (f [:start-element (keyword q-name) atts]))
     (endElement [uri local-name q-name]
       (f [:end-element (keyword q-name)]))
 
@@ -288,6 +249,22 @@
   (map throw-if-error events))
 
 
+;; swiped from data.xml:
+(defn attrs->map [^Attributes atts]
+  (into {} (for [^Long i (range (.getLength atts))]
+             [(keyword (.getQName atts i))
+              (.getValue atts i)])))
+
+(defn mapify-attrs
+  "Tranform start-element events so that attributes are stored in a
+  map, rather than an Attributes instance."
+  [events]
+  (map (fn [[type tag attrs :as evt]]
+         (if (= type :start-element)
+           [:start-element tag (attrs->map attrs)]
+           evt))
+       events))
+
 (defn merge-adjacent-text
   "Transform the event stream so that adjacent bits of text are
    emitted as a single text event."
@@ -346,7 +323,7 @@
       :start-element
       (let [[_ tag attrs]     evt
             [children events] (events->nodes events (peek ns-stack))
-            elt               (Element. tag attrs children)]
+            elt               (Element. tag attrs children nil)]
         (recur (conj nodes (with-meta elt {:xmlns (peek ns-stack)}))
                events
                ns-stack))
@@ -440,7 +417,7 @@
   ;; example, events for comments, processing-instructions, etc. may
   ;; be produced by the parser and added to the seq, but then
   ;; ignored. This inefficiency should be ameliorated somewhat by the
-  ;; fact that those types of nodes relatively rare in XML.
+  ;; fact that those types of nodes are relatively rare in XML.
   
   (let [;; Use defaults for options unless overridden.
         {:keys [namespaces
@@ -452,10 +429,25 @@
         ;; repeated a lot.
         e (sax-seq source opts)
 
+        ;; Skip ignorable events.
+        e (let [ignored-types
+                (reduce into nil
+                        [(when-not comments [:comment])
+                         (when-not cdata [:start-cdata :end-cdata])
+                         (when-not processing-instructions [:processing-instruction])
+                         ;; Maybe don't need this line (the parser
+                         ;; won't emit these anyway, right?):
+                         (when-not namespaces [:start-prefix-mapping :end-prefix-mapping])
+                         ])]
+            (if ignored-types (apply ignore e ignored-types) e))
+        
         ;; Since the SAX parser runs in another thread, parsing errors
         ;; are caught and put into the event-seq as [:error
         ;; <exception>].  This transformation will re-throw them.
         e (throw-on-error e)
+
+        ;; Turn Attributes on start-element events into maps.
+        e (mapify-attrs e)
 
         ;; SAX parsers can emit multiple "characters" events for one
         ;; piece of text (for example, when it contains entities, such
@@ -466,18 +458,6 @@
         ;; Optionally discard whitespace-only nodes
         e (if keep-whitespace e (skip-whitespace e))
 
-        ;; Figure out which types of node to ignore.
-        ignores (reduce into nil
-                        [(when-not comments [:comment])
-                         (when-not cdata [:start-cdata :end-cdata])
-                         (when-not processing-instructions [:processing-instruction])
-                         ;; Maybe don't need this line (the parser
-                         ;; won't emit these anyway, right?):
-                         (when-not namespaces [:start-prefix-mapping :end-prefix-mapping])
-                         ])
-
-        ;; Skip ignorable events
-        e (if ignores (apply ignore e ignores) e)
         ]
 
     ;; Finally, turn the resulting event-seq into a tree (almost) of
@@ -490,6 +470,10 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Emitting XML
+
+(defprotocol XMLWritable
+  (emit-xml [this ^Writer out]))
+
 
 (defn ^String xml-escape [^String s]
   (-> s
@@ -555,11 +539,28 @@
       (.write "?>"))))
 
 
+
 (extend-protocol XMLWritable
 
   nil
   (emit-xml [_ _])
   
+  Element
+  (emit-xml [this out]
+    (emit-element this out))
+
+  Comment
+  (emit-xml [this out]
+    (emit-comment this out))
+
+  CData
+  (emit-xml [this out]
+    (emit-cdata this out))
+
+  PI
+  (emit-xml [this out]
+    (emit-pi this out))
+
   clojure.lang.Sequential
   (emit-xml [s ^Writer out]
     (doseq [o s]
@@ -569,8 +570,9 @@
   (emit-xml [s ^Writer out]
     (.write out (xml-escape s)))
 
-  Object
-  (emit-xml [o ^Writer out]
+  ;; ???
+  #_Object
+  #_(emit-xml [o ^Writer out]
     (emit-xml (str o) out))
   
   )
@@ -590,6 +592,6 @@
      (let [to (java.io.StringWriter.)]
        (emit-xml nodes to)
        (str to)))
-  ([elts to]
-     (emit-xml elts to)))
+  ([nodes to]
+     (emit-xml nodes to)))
 
