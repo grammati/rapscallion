@@ -91,6 +91,25 @@
   (throw (IllegalArgumentException. (apply str messages))))
 
 
+(defn attrs->map
+  [^Attributes attrs namespaces]
+  (let [attr-key
+        (if namespaces
+          (fn [^Attributes attrs ^Long i]
+            (let [uri (.getURI attrs i)
+                  q-name (.getQName attrs i)]
+              (if (.isEmpty uri)
+                (keyword q-name)
+                (let [[prefix _] (string/split q-name #":" 2)]
+                  (with-meta
+                    [(keyword (.getLocalName attrs i)) uri]
+                    {:prefix prefix})))))
+          (fn [^Attributes attrs ^Long i]
+            (keyword (.getQName attrs i))))]
+    (into {} (for [^Long i (range (.getLength attrs))]
+               [(attr-key attrs i) (.getValue attrs i)]))))
+
+
 (defn sax-handler
   "Return an instance of org.xml.sax.ext.DefaultHandler2 that will
   handle SAX events by calling the supplied function, passing a vector
@@ -109,44 +128,45 @@
     [:comment text]
   "
   [f & [opts]]
-  (proxy [DefaultHandler2] []
+  (let [{:keys [namespaces]} opts]
+    (proxy [DefaultHandler2] []
     
-    ;; Elements
-    (startElement [uri local-name q-name attrs]
-      (f [:start-element uri local-name q-name attrs]))
-    (endElement [uri local-name q-name]
-      (f [:end-element uri local-name q-name]))
+      ;; Elements
+      (startElement [uri local-name q-name attrs]
+        (f [:start-element uri local-name q-name (attrs->map attrs namespaces)]))
+      (endElement [uri local-name q-name]
+        (f [:end-element uri local-name q-name]))
 
-    ;; Text
-    (characters [^chars ch ^long start ^long length]
-      (f [:text (String. ch start length)]))
+      ;; Text
+      (characters [^chars ch ^long start ^long length]
+        (f [:text (String. ch start length)]))
     
-    ;; As far as I can tell, ignorableWhitespace never gets called.
-    ;; does anyone ever need this?
-    #_(ignorableWhitespace [^chars ch ^long start ^long length]
-        (f [:whitespace (String. ch start length)]))
+      ;; As far as I can tell, ignorableWhitespace never gets called.
+      ;; does anyone ever need this?
+      #_(ignorableWhitespace [^chars ch ^long start ^long length]
+          (f [:whitespace (String. ch start length)]))
     
-    ;; Keep track of which text came from a CDATA section
-    (startCDATA []
-      (f [:start-cdata]))
-    (endCDATA []
-      (f [:end-cdata]))
+      ;; Keep track of which text came from a CDATA section
+      (startCDATA []
+        (f [:start-cdata]))
+      (endCDATA []
+        (f [:end-cdata]))
 
-    ;; Processing Instructions
-    (processingInstruction [target data]
-      (f [:processing-instruction target data]))
+      ;; Processing Instructions
+      (processingInstruction [target data]
+        (f [:processing-instruction target data]))
 
-    ;; Mapping prefixes to namespace URIs
-    (startPrefixMapping [prefix uri]
-      (f [:start-prefix-mapping prefix uri]))
-    (endPrefixMapping [prefix]
-      (f [:end-prefix-mapping prefix]))
+      ;; Mapping prefixes to namespace URIs
+      (startPrefixMapping [prefix uri]
+        (f [:start-prefix-mapping prefix uri]))
+      (endPrefixMapping [prefix]
+        (f [:end-prefix-mapping prefix]))
 
-    ;; Comments
-    (comment [^chars ch ^long start ^long length]
-             (f [:comment (String. ch start length)]))
+      ;; Comments
+      (comment [^chars ch ^long start ^long length]
+               (f [:comment (String. ch start length)]))
     
-    ))
+      )))
 
 
 (defprotocol AsInputSource
@@ -252,25 +272,6 @@
   ;; TODO - this function is way too busy
   (let [{:keys [namespaces]} opts
 
-        attr-key
-        (if namespaces
-          (fn [^Attributes attrs ^Long i]
-            (let [uri (.getURI attrs i)
-                  q-name (.getQName attrs i)]
-              (if (.isEmpty uri)
-                (keyword q-name)
-                (let [[prefix _] (string/split q-name #":" 2)]
-                  (with-meta
-                    [(keyword (.getLocalName attrs i)) uri]
-                    {:prefix prefix})))))
-          (fn [^Attributes attrs ^Long i]
-            (keyword (.getQName attrs i))))
-
-        attrs->map
-        (fn [^Attributes attrs]
-          (into {} (for [^Long i (range (.getLength attrs))]
-                     [(attr-key attrs i) (.getValue attrs i)])))
-
         make-element
         (if namespaces
           (fn [[_ uri local-name q-name attrs] content ns-map]
@@ -278,7 +279,7 @@
                   prefix (if tag prefix nil)]
               (with-meta
                 (Element. (keyword local-name)
-                          (attrs->map attrs)
+                          attrs
                           content
                           uri)
                 (if prefix
@@ -286,7 +287,7 @@
                   ns-map))))
           (fn [[_ _ _ q-name attrs] content _]
             (Element. (keyword q-name)
-                      (attrs->map attrs)
+                      attrs
                       content
                       nil)))
         
