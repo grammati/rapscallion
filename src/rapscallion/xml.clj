@@ -87,83 +87,45 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Parsing XML
 
-(def ^:dynamic *xmlns-aware*
-  "Determines whether parsing is XML-namespace-aware.
-
-   When set to false, XML namespaces are more-or-less ignored, and
-   tags and attributes are stored as they appear textually in the
-   XML, including prefixes.
-
-   When set to true, namespace URIs are stored as part of Elements'
-   values, and prefix information is stored in metadata.
-
-   Specifically, setting this when parsing causes the following
-   differences in the resulting tree, where each point below lists the
-   effects of setting *xmlns-aware* to true (t) or false (f):
-
-    * xmlns declarations:
-       t: stored in metadata as :xmlns-decls
-       f: present in the attrs map, like regular attributes
-        
-    * The ns field of Elements:
-       t: the namespace URI (or nil, for the default namespace)
-       f: always nil
-
-    * The tag field of Elements:
-       t: the localName only (no prefix)
-       f: the QName (prefix:tagname)
-
-    * Unprefixed attributes:
-       t: attribute name as a keyword
-       f: attribute name as a keyword
-
-    * Prefixed (namespaced) attributes:
-       t: vector of [:localName ns-uri], with {:prefix prefix} metadata
-       f: the QName as a keyword (prefix:attrname)
-
-    * Other stuff that I can't remember right now:
-       t: ???
-       f: ???
-
-  "
-  true)
-
-
 (defn- parse-error [& messages]
   (throw (IllegalArgumentException. (apply str messages))))
 
 
-(defn xml-handler
+(defn sax-handler
   "Return an instance of org.xml.sax.ext.DefaultHandler2 that will
   handle SAX events by calling the supplied function, passing a vector
-  of 1, 2 or 3 items, the first being the event type as a keyword, and
-  the other 2 (optional) being the associated data.
+  of 1 or more items, the first being the event type as a keyword, and
+  the others being the associated data.
 
   The event types and their associated data are:
-    [:start-element tag attrs]
-    [:end-element tag]
+    [:start-element uri local-name q-name attrs]
+    [:end-element uri local-name q-name]
+    [:start-prefix-mapping prefix uri]
+    [:end-prefix-mapping prefix]
     [:text string]
     [:start-cdata]
     [:end-cdata]
     [:processing-instruction target data]
-    [:start-prefix-mapping prefix uri]
-    [:end-prefix-mapping prefix]
     [:comment text]
   "
-
-  [f]
+  [f & [opts]]
   (proxy [DefaultHandler2] []
     
     ;; Elements
-    (startElement [uri local-name q-name ^Attributes atts]
-      (f [:start-element (keyword q-name) atts]))
+    (startElement [uri local-name q-name attrs]
+      (f [:start-element uri local-name q-name attrs]))
     (endElement [uri local-name q-name]
-      (f [:end-element (keyword q-name)]))
+      (f [:end-element uri local-name q-name]))
 
     ;; Text
     (characters [^chars ch ^long start ^long length]
       (f [:text (String. ch start length)]))
-
+    
+    ;; As far as I can tell, ignorableWhitespace never gets called.
+    ;; does anyone ever need this?
+    #_(ignorableWhitespace [^chars ch ^long start ^long length]
+        (f [:whitespace (String. ch start length)]))
+    
     ;; Keep track of which text came from a CDATA section
     (startCDATA []
       (f [:start-cdata]))
@@ -182,7 +144,7 @@
 
     ;; Comments
     (comment [^chars ch ^long start ^long length]
-      (f [:comment (String. ch start length)]))
+             (f [:comment (String. ch start length)]))
     
     ))
 
@@ -208,25 +170,24 @@
 
 (defn sax-seq
   "Given a source of XML, returns a sequence of events, in the form of
-  vectors of [type data ...]. See xml-handler for details."
+   vectors of [type data ...]. See sax-handler for details."
   [in & [opts]]
-  (let [{:keys [namespaces]
-         :or   {namespaces true}} opts
-         
+  (let [{:keys [namespaces]} opts
         ^InputSource in (as-input-source in)
         parser          (XMLReaderFactory/createXMLReader)
-        [put event-seq] (pipe/pipe)
-        handler         (xml-handler put)]
+        [put event-seq] (pipe/pipe {:capacity 4096})
+        handler         (sax-handler put opts)]
     
     (.setContentHandler parser handler)
     
-    ;; Set the "lexical-handler" property in order to get
-    ;; start-prefix-mapping & end-prefix-mapping events.
-    (.setProperty parser "http://xml.org/sax/properties/lexical-handler" handler)
-    
-    ;; Setting this to true means that undeclared namespace-prefixes
-    ;; will be an error.
-    (.setFeature parser "http://xml.org/sax/features/namespaces" namespaces)
+    (when namespaces
+      ;; Set the "lexical-handler" property in order to get
+      ;; start-prefix-mapping & end-prefix-mapping events.
+      (.setProperty parser "http://xml.org/sax/properties/lexical-handler" handler)
+      
+      ;; Setting this to true means that undeclared namespace-prefixes
+      ;; will be an error.
+      (.setFeature parser "http://xml.org/sax/features/namespaces" namespaces))
 
     ;; Run the SAX parser in a thread.
     (future
@@ -239,31 +200,17 @@
 
     event-seq))
 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Transformations of event streams
-(defn throw-if-error [[type ex :as evt]]
-  (if (= :error type)
-    (throw ex)
-    evt))
 
 (defn throw-on-error [events]
-  (map throw-if-error events))
-
-
-;; swiped from data.xml:
-(defn attrs->map [^Attributes atts]
-  (into {} (for [^Long i (range (.getLength atts))]
-             [(keyword (.getQName atts i))
-              (.getValue atts i)])))
-
-(defn mapify-attrs
-  "Tranform start-element events so that attributes are stored in a
-  map, rather than an Attributes instance."
-  [events]
-  (map (fn [[type tag attrs :as evt]]
-         (if (= type :start-element)
-           [:start-element tag (attrs->map attrs)]
+  (map (fn [[type exc :as evt]]
+         (if (= :error type)
+           (throw exc)
            evt))
        events))
+
 
 (defn merge-adjacent-text
   "Transform the event stream so that adjacent bits of text are
@@ -301,66 +248,107 @@
    1 - A seq of nodes extracted from the event seq, and
    2 - A seq of the unconsumed events.
   "
-  [events & [xmlns-prefix-map]]
+  [events & [opts]]
+  ;; TODO - this function is way too busy
+  (let [{:keys [namespaces]} opts
 
-  ;; Notes: I tried for a while to make this consume the event-seq
-  ;;        lazily, but that made my brain explode.
-  
-  (loop [nodes []
-         [[type data :as evt] & events] events
-         ns-stack (list xmlns-prefix-map)]
-    
-    (case type
-      
-      :start-prefix-mapping
-      (let [[_ prefix uri] evt
-            ns-map (assoc-in (peek ns-stack) [:xmlns uri] prefix)]
-        (recur nodes events (conj ns-stack ns-map)))
+        attr-key
+        (if namespaces
+          (fn [^Attributes attrs ^Long i]
+            (let [uri (.getURI attrs i)
+                  q-name (.getQName attrs i)]
+              (if (.isEmpty uri)
+                (keyword q-name)
+                (let [[prefix _] (string/split q-name #":" 2)]
+                  (with-meta
+                    [(keyword (.getLocalName attrs i)) uri]
+                    {:prefix prefix})))))
+          (fn [^Attributes attrs ^Long i]
+            (keyword (.getQName attrs i))))
 
-      :end-prefix-mapping
-      (recur nodes events (pop ns-stack))
-      
-      :start-element
-      (let [[_ tag attrs]     evt
-            [children events] (events->nodes events (peek ns-stack))
-            elt               (Element. tag attrs children nil)]
-        (recur (conj nodes (with-meta elt {:xmlns (peek ns-stack)}))
-               events
-               ns-stack))
+        attrs->map
+        (fn [^Attributes attrs]
+          (into {} (for [^Long i (range (.getLength attrs))]
+                     [(attr-key attrs i) (.getValue attrs i)])))
 
-      :text
-      (recur (conj nodes data)
-             events
-             ns-stack)
+        make-element
+        (if namespaces
+          (fn [[_ uri local-name q-name attrs] content ns-map]
+            (let [[prefix tag] (string/split q-name #":" 2)
+                  prefix (if tag prefix nil)]
+              (with-meta
+                (Element. (keyword local-name)
+                          (attrs->map attrs)
+                          content
+                          uri)
+                (if prefix
+                  (assoc ns-map :prefix prefix) ;TODO - intern this somehow
+                  ns-map))))
+          (fn [[_ _ _ q-name attrs] content _]
+            (Element. (keyword q-name)
+                      (attrs->map attrs)
+                      content
+                      nil)))
+        
+        make-nodes
+        (fn make-nodes [events xmlns-map]
+          (loop [nodes []
+                 [[type data :as evt] & events] events
+                 ns-stack (list xmlns-map)]
+            
+            (case type
+              
+              :start-prefix-mapping
+              (let [[_ prefix uri] evt
+                    ns-map (assoc-in (peek ns-stack) [:xmlns prefix] uri)]
+                (recur nodes events (conj ns-stack ns-map)))
 
-      :comment
-      (recur (conj nodes (Comment. data))
-             events
-             ns-stack)
+              :end-prefix-mapping
+              ;; TODO - sanity check? make sure the prefix is in the ns-map?
+              (recur nodes events (pop ns-stack))
+              
+              :start-element
+              (let [ns-map (peek ns-stack)
+                    [children events] (make-nodes events ns-map)
+                    elt (make-element evt children ns-map)]
+                (recur (conj nodes elt)
+                       events
+                       ns-stack))
 
-      :start-cdata
-      (let [[text-nodes [end-cdata & events]]
-            (split-with (fn [[type]] (= type :text)) events)]
-        (assert (= (end-cdata 0) :end-cdata) "Expected :end-cdata event.")
-        (recur (conj nodes (CData. (apply str (map second text-nodes))))
-               events
-               ns-stack))
+              :text
+              (recur (conj nodes data)
+                     events
+                     ns-stack)
 
-      :processing-instruction
-      (let [[_ target text] evt]
-        (recur (conj nodes (PI. target text))
-               events
-               ns-stack))
+              :comment
+              (recur (conj nodes (Comment. data))
+                     events
+                     ns-stack)
 
-      (:end-element nil)
-      [nodes events]
-      
-      )))
+              :start-cdata
+              (let [[text-nodes [end-cdata & events]]
+                    (split-with (fn [[type]] (= type :text)) events)]
+                (assert (= (end-cdata 0) :end-cdata) "Expected :end-cdata event.")
+                (recur (conj nodes (CData. (apply str (map second text-nodes))))
+                       events
+                       ns-stack))
+
+              :processing-instruction
+              (let [[_ target text] evt]
+                (recur (conj nodes (PI. target text))
+                       events
+                       ns-stack))
+
+              (:end-element nil)
+              [nodes events]
+              
+              )))]
+    (make-nodes events nil)))
 
 (defn make-tree
   "Takes a seq of SAX events and returns a vector of the top-level nodes."
-  [events]
-  (let [[nodes events] (events->nodes events)]
+  [events & [opts]]
+  (let [[nodes events] (events->nodes events opts)]
     (when (seq events)
       ;; This shouldn't be possible if the source of the events is an
       ;; actual SAX parser, but could happen for an event-seq from
@@ -386,10 +374,15 @@
    :processing-instructions false
    })
 
-(def ^{:dynamic true} *parse-options* default-parse-options)
+(def ^{:dynamic true
+       :doc "Map of parsing options. Any options not explitly provided
+in a call to parse will take their values from this map.
+
+  "}
+  *parse-options* default-parse-options)
 
 (defn parse
-  "Takes something convertable to a InputSource, and returns a vector
+  "Takes something convertable to a InputSource, and returns a seq
    of top-level XML nodes.
 
    The opts parameter is an optional map of options. The defaults for
@@ -405,7 +398,45 @@
        If false, nodes of the corresponding type are discarded.
 
      :namespaces
-       Sets namespace-awareness in the SAX parser.
+       Sets namespace-awareness in the SAX parser. See below.
+
+   Namespace-awareness has the following effects:
+
+   When set to false, XML namespaces are more-or-less ignored, and
+   tags and attributes are stored as they appear textually in the
+   XML, including prefixes.
+
+   When set to true, namespace URIs are stored as part of Elements'
+   values, and prefix information is stored in metadata.
+
+   Specifically, setting this when parsing causes the following
+   differences in the resulting tree, where each point below lists the
+   effects of setting :namespaces to true (t) or false (f):
+
+    * xmlns declarations:
+       t: stored in metadata as :xmlns-decls
+       f: present in the attrs map, like regular attributes
+        
+    * The ns field of Elements:
+       t: the namespace URI (or nil, for the default namespace)
+       f: always nil
+
+    * The tag field of Elements:
+       t: the localName only (no prefix)
+       f: the QName (prefix:tagname)
+
+    * Unprefixed attributes:
+       t: attribute name as a keyword
+       f: attribute name as a keyword
+
+    * Prefixed (namespaced) attributes:
+       t: vector of [:localName ns-uri], with {:prefix prefix} metadata
+       f: the QName as a keyword (prefix:attrname)
+
+    * Other stuff that I can't remember right now:
+       t: ???
+       f: ???
+
    "
   
   [source & [opts]]
@@ -446,9 +477,6 @@
         ;; <exception>].  This transformation will re-throw them.
         e (throw-on-error e)
 
-        ;; Turn Attributes on start-element events into maps.
-        e (mapify-attrs e)
-
         ;; SAX parsers can emit multiple "characters" events for one
         ;; piece of text (for example, when it contains entities, such
         ;; as &amp;). It's generally more convenient to work with
@@ -464,7 +492,7 @@
     ;; nodes. This actually returns all the top-level nodes, which
     ;; should consist of exactly one Element, as well as any number of
     ;; Comments and PIs preceeding and/or following the Element.
-    (make-tree e)))
+    (make-tree e opts)))
 
 
 
