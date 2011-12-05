@@ -17,7 +17,8 @@
   (tag [this] "Return the tag of the element")
   (attrs [this] "Return a map of the attributes of the element")
   (content [this] "Return a sequence of children of the element")
-  (uri [this] "Return the namespace URI of the element"))
+  (uri [this] "Return the namespace URI of the element")
+  (prefix [this] "Returns the prefix that should be used when emitting the element"))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -514,12 +515,19 @@ in a call to parse will take their values from this map.
       xml-escape
       (.replaceAll "'"  "&apos;")))
 
+(defn emit-attr [k v ^Writer out]
+  (.write out " ")
+  (if (keyword? k)))
 
 (defn emit-element [^Element e ^Writer out]
-  (let [{:keys [tag attrs content]} e]
+  (let [tag (tag e)
+        attrs (attrs e)
+        content (content e)
+        prefix (prefix e)
+        tagname (str prefix (if prefix \:) (name tag))]
     (doto out
       (.write "<")
-      (.write (name tag)))
+      (.write tagname))
     (doseq [[k v] attrs]
       (if-not (nil? v)
         (doto out
@@ -536,7 +544,7 @@ in a call to parse will take their values from this map.
           (emit-xml child out))
         (doto out
           (.write "</")
-          (.write (name tag))
+          (.write tagname)
           (.write ">"))))))
 
 (defn emit-comment [^Comment c ^Writer out]
