@@ -6,7 +6,7 @@
             (clojure.java [io :as io])
             (yoodls [pipe :as pipe]))
   (:import [java.io Writer Reader StringReader]
-           [org.xml.sax Attributes InputSource]
+           [org.xml.sax Attributes InputSource Locator]
            [org.xml.sax.ext DefaultHandler2]
            [org.xml.sax.helpers XMLReaderFactory]))
 
@@ -29,7 +29,9 @@
   (tag [this] tag)
   (attrs [this] attrs)
   (content [this] content)
-  (uri [this] uri))
+  (uri [this] uri)
+  (prefix [this]
+    (when-let [md (meta this)])))
 
 (defrecord Comment [^String text])
 
@@ -83,7 +85,11 @@
 (defn append-content [elt & children]
   (update-in elt [:content] concat children))
 
+(defn flatten-element [elt]
+  (tree-seq element? content elt))
 
+(defn flatten-elements [elts]
+  (mapcat flatten-element elts))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Parsing XML
@@ -129,9 +135,25 @@
     [:comment text]
   "
   [f & [opts]]
-  (let [{:keys [namespaces]} opts]
-    (proxy [DefaultHandler2] []
+  (let [{:keys [namespaces line-numbers]} opts
+        locator (atom nil)
+        with-line-numbers (fn [evt]
+                            (if-let [^Locator loc @locator]
+                              (with-meta
+                                evt
+                                {:line (.getLineNumber loc)
+                                 :col  (.getColumnNumber loc)})
+                              evt))
+        f (if line-numbers
+            #(f (with-line-numbers %))
+            f)]
     
+    (proxy [DefaultHandler2] []
+
+      ;; For getting line & column numbers
+      (setDocumentLocator [^Locator loc]
+        (reset! locator loc))
+      
       ;; Elements
       (startElement [uri local-name q-name attrs]
         (f [:start-element uri local-name q-name (attrs->map attrs namespaces)]))
@@ -195,7 +217,7 @@
   [in & [opts]]
   (let [{:keys [namespaces]} opts
         ^InputSource in (as-input-source in)
-        parser          (XMLReaderFactory/createXMLReader)
+        parser          (XMLReaderFactory/createXMLReader) ;TODO - make this pluggable
         [put event-seq] (pipe/pipe {:capacity 4096})
         handler         (sax-handler put opts)]
     
@@ -273,9 +295,19 @@
   ;; TODO - this function is way too busy
   (let [{:keys [namespaces]} opts
 
+        ;; Memoize the metadata maps
+        md-map-with-prefix
+        (let [cache (atom nil)]
+          (fn [md-map prefix]
+            (if-let [m (get-in @cache [md-map prefix])]
+              m
+              (let [new-map (assoc md-map :prefix prefix)]
+                (swap! cache assoc-in [md-map prefix] new-map)
+                new-map))))
+        
         make-element
         (if namespaces
-          (fn [[_ uri local-name q-name attrs] content ns-map]
+          (fn [[_ uri local-name q-name attrs] content md-map]
             (let [[prefix tag] (string/split q-name #":" 2)
                   prefix (if tag prefix nil)]
               (with-meta
@@ -284,8 +316,8 @@
                           content
                           uri)
                 (if prefix
-                  (assoc ns-map :prefix prefix) ;TODO - intern this somehow
-                  ns-map))))
+                  (md-map-with-prefix md-map prefix)
+                  md-map))))
           (fn [[_ _ _ q-name attrs] content _]
             (Element. (keyword q-name)
                       attrs
@@ -293,39 +325,39 @@
                       nil)))
         
         make-nodes
-        (fn make-nodes [events xmlns-map]
+        (fn make-nodes [events md-map]
           (loop [nodes []
                  [[type data :as evt] & events] events
-                 ns-stack (list xmlns-map)]
+                 md-stack (list md-map)]
             
             (case type
               
               :start-prefix-mapping
               (let [[_ prefix uri] evt
-                    ns-map (assoc-in (peek ns-stack) [:xmlns prefix] uri)]
-                (recur nodes events (conj ns-stack ns-map)))
+                    md-map (assoc-in (peek md-stack) [:xmlns prefix] uri)]
+                (recur nodes events (conj md-stack md-map)))
 
               :end-prefix-mapping
-              ;; TODO - sanity check? make sure the prefix is in the ns-map?
-              (recur nodes events (pop ns-stack))
+              ;; TODO - sanity check? make sure the prefix is in the md-map?
+              (recur nodes events (pop md-stack))
               
               :start-element
-              (let [ns-map (peek ns-stack)
-                    [children events] (make-nodes events ns-map)
-                    elt (make-element evt children ns-map)]
+              (let [md-map (peek md-stack)
+                    [children events] (make-nodes events md-map)
+                    elt (make-element evt children md-map)]
                 (recur (conj nodes elt)
                        events
-                       ns-stack))
+                       md-stack))
 
               :text
               (recur (conj nodes data)
                      events
-                     ns-stack)
+                     md-stack)
 
               :comment
               (recur (conj nodes (Comment. data))
                      events
-                     ns-stack)
+                     md-stack)
 
               :start-cdata
               (let [[text-nodes [end-cdata & events]]
@@ -333,13 +365,13 @@
                 (assert (= (end-cdata 0) :end-cdata) "Expected :end-cdata event.")
                 (recur (conj nodes (CData. (apply str (map second text-nodes))))
                        events
-                       ns-stack))
+                       md-stack))
 
               :processing-instruction
               (let [[_ target text] evt]
                 (recur (conj nodes (PI. target text))
                        events
-                       ns-stack))
+                       md-stack))
 
               (:end-element nil)
               [nodes events]
@@ -360,27 +392,27 @@
 
 ;; New default parse options.
 (def default-parse-options
-  {:namespaces      true
-   :keep-whitespace false
-   :comments        true
-   :cdata           true
+  {:namespaces              true
+   :keep-whitespace         false
+   :comments                true
+   :cdata                   true
    :processing-instructions true
+   :line-numbers            false
    })
 
 ;; For backward-compatibility. Options for parsing clojure.xml-style.
 (def old-parse-options
-  {:namespaces      false
-   :keep-whitespace false
-   :comments        false
-   :cdata           false
+  {:namespaces              false
+   :keep-whitespace         false
+   :comments                false
+   :cdata                   false
    :processing-instructions false
+   :line-numbers            false
    })
 
 (def ^{:dynamic true
        :doc "Map of parsing options. Any options not explitly provided
-in a call to parse will take their values from this map.
-
-  "}
+  in a call to parse will take their values from this map."}
   *parse-options* default-parse-options)
 
 (defn parse
@@ -398,6 +430,10 @@ in a call to parse will take their values from this map.
      :cdata
      :processing-instructions
        If false, nodes of the corresponding type are discarded.
+
+     :line-numbers
+       If true, the parser will put line-numbers and column-numbers
+       in the metadata of elements, when supported by the SAX parser.
 
      :namespaces
        Sets namespace-awareness in the SAX parser. See below.
@@ -453,9 +489,10 @@ in a call to parse will take their values from this map.
   ;; fact that those types of nodes are relatively rare in XML.
   
   (let [;; Use defaults for options unless overridden.
+        opts (merge *parse-options* opts)
         {:keys [namespaces
                 comments cdata processing-instructions
-                keep-whitespace]} (merge *parse-options* opts)
+                keep-whitespace]} opts
 
         ;; First, run the SAX parser to produce the full sequence of
         ;; events. Give it the nice short name "e", since it will be
@@ -504,6 +541,8 @@ in a call to parse will take their values from this map.
 (defprotocol XMLWritable
   (emit-xml [this ^Writer out]))
 
+(defprotocol XMLWritableAttr
+  (emit-attr [this value ^Writer out]))
 
 (defn ^String xml-escape [^String s]
   (-> s
@@ -515,9 +554,17 @@ in a call to parse will take their values from this map.
       xml-escape
       (.replaceAll "'"  "&apos;")))
 
-(defn emit-attr [k v ^Writer out]
-  (.write out " ")
-  (if (keyword? k)))
+(extend-protocol XMLWritableAttr
+  clojure.lang.Keyword
+  (emit-attr [kwd val ^Writer out]
+    (doto out
+      (.write (name kwd))
+      (.write "=\"")
+      (.write (xml-escape-attr (str val)))
+      (.write \")))
+
+  clojure.lang.IPersistentVector
+  (emit-attr [[name uri] ]))
 
 (defn emit-element [^Element e ^Writer out]
   (let [tag (tag e)
@@ -529,13 +576,9 @@ in a call to parse will take their values from this map.
       (.write "<")
       (.write tagname))
     (doseq [[k v] attrs]
-      (if-not (nil? v)
-        (doto out
-          (.write " ")
-          (.write (name k))
-          (.write "='")
-          (.write (xml-escape-attr (str v)))
-          (.write "'"))))
+      (when-not (nil? v)
+        (.write " ")
+        (emit-attr k v out)))
     (if (empty? content)
       (.write out "/>")
       (do
