@@ -494,14 +494,15 @@
   (walk/prewalk
    (fn [e]
      (if (xml/element? e)
-       (list 'rapscallion.xml.Element. (:tag e) (:attrs e) (:content e))
+       (list `xml/element (:tag e) (:attrs e) (:content e))
        e))
    x))
 
 (defn to-template-fn
   "Given a template, returns a data structure that can be eval-ed into a function."
   [xml-in]
-  (let [root     (xml/parse xml-in xml/old-parse-options) ;TODO
+  (let [roots    (xml/parse xml-in xml/old-parse-options) ;TODO
+        root     (first (filter xml/element? roots))
         [root [args requires uses imports]]
                  (xml/pop-attrs root :rap:args :rap:require :rap:use :rap:import)
         args     (read-all args)

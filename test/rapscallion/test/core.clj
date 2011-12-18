@@ -2,14 +2,28 @@
   (:require [rapscallion 
              [core :as rap]]
             [eksemel
-             [xml :as xml]])
+             [xml :as xml]]
+            [clojure
+             [string :as string]])
   (:use [clojure.test]))
 
+
+(defn xml-str=
+  "Compare two XML strings, ignoring whitespace."
+  [a b]
+  (letfn [(squish [x]
+            (-> x
+                string/trim
+                (string/replace #">\s+<" "><")))]
+    (= (squish a) (squish b))))
 
 (defn xml=
   "Compare two XML objects."
   [a b]
-  (= (xml/parse a) (xml/parse b)))
+  (try
+    (= (xml/parse a) (xml/parse b))
+    (catch Exception x
+      (xml-str= a b))))
 
 
 (deftest test-read-partial
