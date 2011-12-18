@@ -16,22 +16,28 @@
 (defprotocol ElementAccessor
   (tag [this] "Return the tag of the element")
   (attrs [this] "Return a map of the attributes of the element")
-  (content [this] "Return a sequence of children of the element")
+  (content [this] "Return a sequence of children of the element"))
+
+(defprotocol XmlNamespaced
   (uri [this] "Return the namespace URI of the element")
-  (prefix [this] "Returns the prefix that should be used when emitting the element"))
+  (prefix [this] "Returns the prefix that should be used when emitting the element. Can return nil to indicate no preference."))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Records for XML node types
 
 (defrecord Element [tag attrs content uri]
+  
   ElementAccessor
   (tag [this] tag)
   (attrs [this] attrs)
   (content [this] content)
+  
+  XmlNamespaced
   (uri [this] uri)
   (prefix [this]
-    (when-let [md (meta this)])))
+    (when-let [md (meta this)]
+      (get-in md [:xmlns uri]))))
 
 (defrecord Comment [^String text])
 
@@ -99,9 +105,9 @@
 
 
 (defn attrs->map
-  [^Attributes attrs namespaces]
+  [^Attributes attrs xmlns-aware]
   (let [attr-key
-        (if namespaces
+        (if xmlns-aware
           (fn [^Attributes attrs ^Long i]
             (let [uri (.getURI attrs i)
                   q-name (.getQName attrs i)]
@@ -135,7 +141,7 @@
     [:comment text]
   "
   [f & [opts]]
-  (let [{:keys [namespaces line-numbers]} opts
+  (let [{:keys [xmlns-aware line-numbers]} opts
         locator (atom nil)
         with-line-numbers (fn [evt]
                             (if-let [^Locator loc @locator]
@@ -156,7 +162,7 @@
       
       ;; Elements
       (startElement [uri local-name q-name attrs]
-        (f [:start-element uri local-name q-name (attrs->map attrs namespaces)]))
+        (f [:start-element uri local-name q-name (attrs->map attrs xmlns-aware)]))
       (endElement [uri local-name q-name]
         (f [:end-element uri local-name q-name]))
 
@@ -215,7 +221,7 @@
   "Given a source of XML, returns a sequence of events, in the form of
    vectors of [type data ...]. See sax-handler for details."
   [in & [opts]]
-  (let [{:keys [namespaces]} opts
+  (let [{:keys [xmlns-aware]} opts
         ^InputSource in (as-input-source in)
         parser          (XMLReaderFactory/createXMLReader) ;TODO - make this pluggable
         [put event-seq] (pipe/pipe {:capacity 4096})
@@ -223,14 +229,18 @@
     
     (.setContentHandler parser handler)
     
-    (when namespaces
+    (when xmlns-aware
       ;; Set the "lexical-handler" property in order to get
       ;; start-prefix-mapping & end-prefix-mapping events.
-      (.setProperty parser "http://xml.org/sax/properties/lexical-handler" handler)
-      
-      ;; Setting this to true means that undeclared namespace-prefixes
-      ;; will be an error.
-      (.setFeature parser "http://xml.org/sax/features/namespaces" namespaces))
+      (.setProperty parser
+                    "http://xml.org/sax/properties/lexical-handler"
+                    handler))
+    
+    ;; Setting this to true means that undeclared namespace-prefixes
+    ;; will be an error.
+    (.setFeature parser
+                 "http://xml.org/sax/features/namespaces"
+                 (if xmlns-aware true false))
 
     ;; Run the SAX parser in a thread.
     (future
@@ -293,20 +303,18 @@
   "
   [events & [opts]]
   ;; TODO - this function is way too busy
-  (let [{:keys [namespaces]} opts
+  (let [{:keys [xmlns-aware]} opts
 
         ;; Memoize the metadata maps
-        md-map-with-prefix
-        (let [cache (atom nil)]
+        element-metadata
+        (memoize
           (fn [md-map prefix]
-            (if-let [m (get-in @cache [md-map prefix])]
-              m
-              (let [new-map (assoc md-map :prefix prefix)]
-                (swap! cache assoc-in [md-map prefix] new-map)
-                new-map))))
+            (if prefix
+              (assoc md-map :prefix prefix)
+              md-map)))
         
         make-element
-        (if namespaces
+        (if xmlns-aware
           (fn [[_ uri local-name q-name attrs] content md-map]
             (let [[prefix tag] (string/split q-name #":" 2)
                   prefix (if tag prefix nil)]
@@ -315,9 +323,7 @@
                           attrs
                           content
                           uri)
-                (if prefix
-                  (md-map-with-prefix md-map prefix)
-                  md-map))))
+                (element-metadata md-map prefix))))
           (fn [[_ _ _ q-name attrs] content _]
             (Element. (keyword q-name)
                       attrs
@@ -392,7 +398,7 @@
 
 ;; New default parse options.
 (def default-parse-options
-  {:namespaces              true
+  {:xmlns-aware             true
    :keep-whitespace         false
    :comments                true
    :cdata                   true
@@ -402,7 +408,7 @@
 
 ;; For backward-compatibility. Options for parsing clojure.xml-style.
 (def old-parse-options
-  {:namespaces              false
+  {:xmlns-aware             false
    :keep-whitespace         false
    :comments                false
    :cdata                   false
@@ -435,7 +441,7 @@
        If true, the parser will put line-numbers and column-numbers
        in the metadata of elements, when supported by the SAX parser.
 
-     :namespaces
+     :xmlns-aware
        Sets namespace-awareness in the SAX parser. See below.
 
    Namespace-awareness has the following effects:
@@ -449,7 +455,7 @@
 
    Specifically, setting this when parsing causes the following
    differences in the resulting tree, where each point below lists the
-   effects of setting :namespaces to true (t) or false (f):
+   effects of setting :xmlns-aware to true (t) or false (f):
 
     * xmlns declarations:
        t: stored in metadata as :xmlns-decls
@@ -490,7 +496,7 @@
   
   (let [;; Use defaults for options unless overridden.
         opts (merge *parse-options* opts)
-        {:keys [namespaces
+        {:keys [xmlns-aware
                 comments cdata processing-instructions
                 keep-whitespace]} opts
 
@@ -507,7 +513,7 @@
                          (when-not processing-instructions [:processing-instruction])
                          ;; Maybe don't need this line (the parser
                          ;; won't emit these anyway, right?):
-                         (when-not namespaces [:start-prefix-mapping :end-prefix-mapping])
+                         (when-not xmlns-aware [:start-prefix-mapping :end-prefix-mapping])
                          ])]
             (if ignored-types (apply ignore e ignored-types) e))
         
@@ -538,6 +544,42 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Emitting XML
 
+(def ^:dynamic *emitter-state* nil)
+
+(defn update-emitter-state [elt]
+  )
+
+(defn valid-prefix?
+  "Returns true if the given prefix is valid for the uri, for the current value
+   of *emitter-state*."
+  [prefix uri]
+  (let [declared-prefixes (get-in *emitter-state* [:prefixes uri])]
+    (some #(= prefix %) declared-prefixes)))
+
+
+(defprotocol XMLPrefix
+  (prefix-for [this] "Returns the prefix to use for "))
+
+(extend-protocol XMLPrefix
+  
+  Element
+  (prefix-for [elt]
+    (if-let [uri (uri elt)]
+      (or (:prefix (meta elt))
+          (peek (get-in *emitter-state* [:prefixes uri])))))
+
+  ;; Namespaced attribute
+  clojure.lang.IPersistentVector
+  (prefix-for [[name uri :as attr]]
+    ())
+
+  ;; Non-namespaced attribute
+  clojure.lang.Keyword
+  (prefix-for [_]
+    nil)
+  )
+
+
 (defprotocol XMLWritable
   (emit-xml [this ^Writer out]))
 
@@ -556,28 +598,37 @@
 
 (extend-protocol XMLWritableAttr
   clojure.lang.Keyword
-  (emit-attr [kwd val ^Writer out]
+  (emit-attr [kwd val out]
+    (emit-attr (name kwd) val out))
+
+  String
+  (emit-attr [name val ^Writer out]
     (doto out
-      (.write (name kwd))
-      (.write "=\"")
+      (.write name)
+      (.write "='")
       (.write (xml-escape-attr (str val)))
-      (.write \")))
+      (.write "'")))
 
   clojure.lang.IPersistentVector
-  (emit-attr [[name uri] ]))
+  (emit-attr [[kwd uri :as attr] val ^Writer out]
+    (if uri
+      (if-let [prefix (:prefix (meta attr))]
+        (emit-attr (str prefix  \: (name kwd)) val out))
+      (emit-attr kwd val out))))
 
-(defn emit-element [^Element e ^Writer out]
-  (let [tag (tag e)
-        attrs (attrs e)
-        content (content e)
-        prefix (prefix e)
+(defn emit-element
+  [elt ^Writer out]
+  (let [tag (tag elt)
+        attrs (attrs elt)
+        content (content elt)
+        prefix (prefix-for elt)
         tagname (str prefix (if prefix \:) (name tag))]
     (doto out
       (.write "<")
       (.write tagname))
     (doseq [[k v] attrs]
       (when-not (nil? v)
-        (.write " ")
+        (.write out " ")
         (emit-attr k v out)))
     (if (empty? content)
       (.write out "/>")
@@ -610,7 +661,7 @@
   (let [{:keys [target text]} pi]
     ;; TODO - validate target: http://www.w3.org/TR/REC-xml/#sec-pi
     (when (.contains text "?>")
-      (throw (IllegalArgumentException. "Illegal end sequence, \"?>\", in processing instruction." target)))
+      (throw (IllegalArgumentException. "Illegal end sequence, \"?>\", in processing instruction.")))
     (doto out
       (.write "<?")
       (.write target)
@@ -673,5 +724,6 @@
        (emit-xml nodes to)
        (str to)))
   ([nodes to]
-     (emit-xml nodes to)))
+     (binding [*emitter-state* (atom nil)]
+       (emit-xml nodes to))))
 
