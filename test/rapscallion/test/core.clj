@@ -1,8 +1,15 @@
 (ns rapscallion.test.core
   (:require [rapscallion 
-             [core :as rap]])
-  (:use [clojure.test]
-        [rapscallion.test.xml :only [xml=]]))
+             [core :as rap]]
+            [eksemel
+             [xml :as xml]])
+  (:use [clojure.test]))
+
+
+(defn xml=
+  "Compare two XML objects."
+  [a b]
+  (= (xml/parse a) (xml/parse b)))
 
 
 (deftest test-read-partial

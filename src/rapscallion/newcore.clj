@@ -2,7 +2,7 @@
     ^{:author "Chris Perkins"
       :doc "The Rapscallion XML generation and transformation library."}
   rapscallion.newcore
-  (:require (rapscallion
+  (:require (eksemel
              (xml :as xml)))
   )
 

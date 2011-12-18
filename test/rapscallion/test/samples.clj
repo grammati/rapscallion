@@ -1,12 +1,13 @@
 (ns rapscallion.test.samples
   (:require [rapscallion 
-              [core :as rap]
-              [xml :as xml]
-              [text :as text]]
+             [core :as rap]
+             [text :as text]]
+            [eksemel
+             [xml :as xml]]
             [clojure
              [string :as string]])
   (:use [clojure.test]
-        [rapscallion.test.xml :only [xml=]]))
+        [rapscallion.test.core :only [xml=]]))
 
 
 (defn eval-file [#^java.io.File f]

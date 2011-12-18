@@ -2,16 +2,17 @@
   ^{:author "Chris Perkins"
     :doc "The Rapscallion XML generation and transformation library."}
   rapscallion.core
-  (:import (java.io Reader StringReader PushbackReader))
   (:require (clojure
              (string :as string)
              (pprint :as pprint)
              (walk :as walk)))
-  (:require (rapscallion
+  (:require (eksemel
              (xml :as xml)))
   (:require (imparsonate
              (core :as imp)
              (lib :as implib)))
+  (:import (java.io Reader StringReader PushbackReader)
+           (eksemel.xml Element))
   )
 
 
@@ -500,7 +501,7 @@
 (defn to-template-fn
   "Given a template, returns a data structure that can be eval-ed into a function."
   [xml-in]
-  (let [root     (xml/parse xml-in)
+  (let [root     (xml/parse xml-in xml/old-parse-options) ;TODO
         [root [args requires uses imports]]
                  (xml/pop-attrs root :rap:args :rap:require :rap:use :rap:import)
         args     (read-all args)

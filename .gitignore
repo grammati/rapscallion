@@ -6,4 +6,4 @@ bin
 
 \#*
 .lein-failures
-
+.lein-deps-sum
